@@ -97,6 +97,7 @@ const CHAT_RENDER_BATCH_PROPS = {
   liveNodeBuffer: 24,
 } as const;
 const USER_SCROLL_INTENT_GRACE_MS = 250;
+let registeredHighlightThemeKey: string | null = null;
 
 // ── Attachment preview component ────────────────────────────────────────
 
@@ -1542,22 +1543,39 @@ function AssistantFooter({
   const [branchTitle, setBranchTitle] = useState('');
   const conversations = useConversationStore((s) => s.conversations);
   const currentConvTitle = conversations.find((c) => c.id === conversationId)?.title ?? '';
-  // Track message count to re-fetch versions when companion messages appear
-  const messagesLength = useConversationStore((s) => s.messages.length);
   const storeMessages = useConversationStore((s) => s.messages);
 
   useEffect(() => {
-    if (msg.parent_message_id && conversationId) {
-      listMessageVersions(conversationId, msg.parent_message_id).then((v) => {
-        if (v) {
-          setAllVersions(v);
-          if (v.length > 0) {
-            hydrateMessageVersions(msg.parent_message_id!, v);
-          }
+    const parentMessageId = msg.parent_message_id;
+    if (!parentMessageId || !conversationId) {
+      setAllVersions([]);
+      return;
+    }
+
+    let cancelled = false;
+    const run = () => {
+      listMessageVersions(conversationId, parentMessageId).then((v) => {
+        if (cancelled || !v) return;
+        setAllVersions(v);
+        if (v.length > 0) {
+          hydrateMessageVersions(parentMessageId, v);
         }
       });
-    }
-  }, [msg.parent_message_id, msg.id, conversationId, listMessageVersions, hydrateMessageVersions, messagesLength]);
+    };
+
+    const idleCallback = window.requestIdleCallback?.(() => run(), { timeout: 1000 });
+    const timeout = idleCallback == null ? window.setTimeout(run, 250) : null;
+
+    return () => {
+      cancelled = true;
+      if (idleCallback != null) {
+        window.cancelIdleCallback?.(idleCallback);
+      }
+      if (timeout != null) {
+        window.clearTimeout(timeout);
+      }
+    };
+  }, [msg.parent_message_id, msg.id, conversationId, listMessageVersions, hydrateMessageVersions]);
 
   // Merge DB-fetched versions with in-store companion messages for real-time visibility
   const mergedVersions = useMemo(() => {
@@ -1981,13 +1999,15 @@ export function ChatView() {
 
   // Pre-load Shiki themes into the singleton highlighter when theme settings change
   useEffect(() => {
-    console.log('[AQBot Theme Debug] themes changed:', { codeBlockDarkTheme, codeBlockLightTheme, codeBlockThemes, isDarkMode });
-    if (codeBlockThemes.length > 0) {
+    const themeKey = codeBlockThemes.join('|');
+    if (codeBlockThemes.length > 0 && registeredHighlightThemeKey !== themeKey) {
+      registeredHighlightThemeKey = themeKey;
       registerHighlight({ themes: codeBlockThemes as any }).catch((err) => {
+        registeredHighlightThemeKey = null;
         console.error('[AQBot Theme Debug] registerHighlight failed:', err);
       });
     }
-  }, [codeBlockThemes, codeBlockDarkTheme, codeBlockLightTheme, isDarkMode]);
+  }, [codeBlockThemes]);
 
   // Register module-level preview handler for code blocks
   useEffect(() => {

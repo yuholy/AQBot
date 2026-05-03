@@ -71,15 +71,6 @@ function summarize(content: string, maxLen: number): string {
 
 function useEntries(): MinimapEntry[] {
   const messages = useConversationStore((s) => s.messages);
-  const hasOlderMessages = useConversationStore((s) => s.hasOlderMessages);
-  const loadingOlder = useConversationStore((s) => s.loadingOlder);
-
-  // Eagerly load all older messages so the minimap shows the full conversation
-  useEffect(() => {
-    if (hasOlderMessages && !loadingOlder) {
-      useConversationStore.getState().loadOlderMessages();
-    }
-  }, [hasOlderMessages, loadingOlder, messages]);
 
   return useMemo(() => {
     const active = messages.filter((m) => m.is_active !== false);

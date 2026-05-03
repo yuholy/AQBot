@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { PageKey, SettingsSection } from '@/types';
 
 interface UIState {
@@ -15,24 +16,32 @@ interface UIState {
   setSelectedProviderId: (id: string | null) => void;
 }
 
-export const useUIStore = create<UIState>((set, get) => ({
-  activePage: 'chat',
-  previousPage: 'chat',
-  sidebarCollapsed: false,
-  settingsSection: 'general',
-  selectedProviderId: null,
-  setActivePage: (page) => set({ activePage: page }),
-  enterSettings: () => {
-    const current = get().activePage;
-    if (current !== 'settings') {
-      set({ previousPage: current, activePage: 'settings' });
-    }
-  },
-  exitSettings: () => {
-    const prev = get().previousPage;
-    set({ activePage: prev });
-  },
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  setSettingsSection: (section) => set({ settingsSection: section }),
-  setSelectedProviderId: (id) => set({ selectedProviderId: id }),
-}));
+export const useUIStore = create<UIState>()(
+  persist(
+    (set, get) => ({
+      activePage: 'chat',
+      previousPage: 'chat',
+      sidebarCollapsed: false,
+      settingsSection: 'general',
+      selectedProviderId: null,
+      setActivePage: (page) => set({ activePage: page }),
+      enterSettings: () => {
+        const current = get().activePage;
+        if (current !== 'settings') {
+          set({ previousPage: current, activePage: 'settings' });
+        }
+      },
+      exitSettings: () => {
+        const prev = get().previousPage;
+        set({ activePage: prev });
+      },
+      toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      setSettingsSection: (section) => set({ settingsSection: section }),
+      setSelectedProviderId: (id) => set({ selectedProviderId: id }),
+    }),
+    {
+      name: 'aqbot_ui',
+      partialize: (state) => ({ sidebarCollapsed: state.sidebarCollapsed }),
+    },
+  ),
+);

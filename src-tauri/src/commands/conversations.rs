@@ -161,6 +161,42 @@ fn strip_think_tags(content: &str) -> String {
     s
 }
 
+fn extract_think_tags(content: &str) -> Option<String> {
+    let mut remaining = content;
+    let mut extracted = String::new();
+
+    while let Some(start) = remaining.find("<think") {
+        let after_tag = &remaining[start + 6..];
+        let is_tag = after_tag.starts_with('>') || after_tag.starts_with(' ');
+        if !is_tag {
+            break;
+        }
+
+        let Some(open_end_offset) = remaining[start..].find('>') else {
+            break;
+        };
+        let body_start = start + open_end_offset + 1;
+        let Some(close_offset) = remaining[body_start..].find("</think>") else {
+            break;
+        };
+        let body_end = body_start + close_offset;
+        let body = remaining[body_start..body_end].trim();
+        if !body.is_empty() {
+            if !extracted.is_empty() {
+                extracted.push_str("\n\n");
+            }
+            extracted.push_str(body);
+        }
+        remaining = &remaining[body_end + "</think>".len()..];
+    }
+
+    if extracted.is_empty() {
+        None
+    } else {
+        Some(extracted)
+    }
+}
+
 #[derive(Default)]
 struct DisabledThinkingStripState {
     in_think_block: bool,
@@ -397,6 +433,17 @@ fn chat_message_from_message(
         }
         .to_string(),
         content: build_message_content(file_store, message)?,
+        thinking: message
+            .thinking
+            .clone()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                if message.role == MessageRole::Assistant {
+                    extract_think_tags(&message.content)
+                } else {
+                    None
+                }
+            }),
         tool_calls,
         tool_call_id: message.tool_call_id.clone(),
     })
@@ -1127,12 +1174,14 @@ async fn generate_ai_title_with(
         ChatMessage {
             role: "system".to_string(),
             content: ChatContent::Text(prompt.to_string()),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         },
         ChatMessage {
             role: "user".to_string(),
             content: ChatContent::Text(conversation_text),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         },
@@ -1577,6 +1626,7 @@ fn spawn_stream_task(
             chat_messages.push(ChatMessage {
                 role: "assistant".to_string(),
                 content: ChatContent::Text(stripped_content),
+                thinking: extract_think_tags(&content),
                 tool_calls: Some(tool_calls.clone()),
                 tool_call_id: None,
             });
@@ -1588,6 +1638,7 @@ fn spawn_stream_task(
                     &db,
                     &conversation_id,
                     &content,
+                    extract_think_tags(&content).as_deref(),
                     tc_json.as_deref(),
                     &provider.id,
                     &model_id,
@@ -1715,6 +1766,7 @@ fn spawn_stream_task(
                 chat_messages.push(ChatMessage {
                     role: "tool".to_string(),
                     content: ChatContent::Text(result_content.to_string()),
+                    thinking: None,
                     tool_calls: None,
                     tool_call_id: Some(tc.id.clone()),
                 });
@@ -1753,6 +1805,7 @@ fn spawn_stream_task(
         } else {
             format!("{}{}", content_prefix, total_content)
         };
+        let saved_thinking = extract_think_tags(&saved_content);
         if let Err(e) = aqbot_core::entity::messages::Entity::update(
             aqbot_core::entity::messages::ActiveModel {
                 id: Set(assistant_message_id.clone()),
@@ -1760,7 +1813,7 @@ fn spawn_stream_task(
                 token_count: Set(token_count.map(|v| v as i64)),
                 prompt_tokens: Set(prompt_tokens.map(|v| v as i64)),
                 completion_tokens: Set(completion_tokens.map(|v| v as i64)),
-                thinking: Set(None), // thinking is now embedded in content as <think> tags
+                thinking: Set(saved_thinking),
                 tool_calls_json: Set(final_tool_calls_json),
                 status: Set(final_status.to_string()),
                 tokens_per_second: Set(final_tokens_per_second),
@@ -1995,6 +2048,7 @@ pub async fn send_message(
                 "system".to_string()
             },
             content: ChatContent::Text(sys.clone()),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -2043,6 +2097,7 @@ pub async fn send_message(
                 "The following reference materials may be relevant to the user's question. Use them if helpful:\n\n{}",
                 rag_result.context_parts.join("\n\n")
             )),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -2375,6 +2430,7 @@ pub async fn regenerate_message(
         chat_messages.push(ChatMessage {
             role: "system".to_string(),
             content: ChatContent::Text(sys.clone()),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -2417,6 +2473,7 @@ pub async fn regenerate_message(
                     "The following reference materials may be relevant to the user's question. Use them if helpful:\n\n{}",
                     rag_result.context_parts.join("\n\n")
                 )),
+                thinking: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
@@ -2680,6 +2737,7 @@ pub async fn regenerate_with_model(
         chat_messages.push(ChatMessage {
             role: "system".to_string(),
             content: ChatContent::Text(sys.clone()),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -2727,6 +2785,7 @@ pub async fn regenerate_with_model(
                     "The following reference materials may be relevant to the user's question. Use them if helpful:\n\n{}",
                     rag_result.context_parts.join("\n\n")
                 )),
+                thinking: None,
                 tool_calls: None,
                 tool_call_id: None,
             });

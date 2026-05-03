@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef, memo } from 'react'
 import { Button, Input, App, theme, Tooltip, Avatar, Checkbox, Dropdown, Empty } from 'antd'
-import { MessageSquarePlus, Search, Archive, ListTodo, Trash2, Pencil, Share, Pin, PinOff, Loader, X, Undo2, ArrowLeft, FileImage, FileCode, FileType, FileText, FolderPlus, FolderOpen, GripVertical, ChevronRight, MessageSquareText } from 'lucide-react'
+import { MessageSquarePlus, Search, Archive, ListTodo, Trash2, Pencil, Share, Pin, PinOff, Loader, X, Undo2, ArrowLeft, FileImage, FileCode, FileType, FileText, FolderPlus, FolderOpen, GripVertical, ChevronRight, MessageSquareText, PanelLeftClose } from 'lucide-react'
 import { ModelIcon } from '@lobehub/icons'
 import { getConvIcon } from '@/lib/convIcon'
 import { exportAsMarkdown, exportAsText, exportAsPNG, exportAsJSON } from '@/lib/exportChat'
@@ -8,7 +8,7 @@ import { invoke } from '@/lib/invoke'
 import Conversations from '@ant-design/x/es/conversations'
 import type { ConversationItemType } from '@ant-design/x/es/conversations/interface'
 import { useTranslation } from 'react-i18next'
-import { useConversationStore, useProviderStore, useSettingsStore, useCategoryStore } from '@/stores'
+import { useConversationStore, useProviderStore, useSettingsStore, useCategoryStore, useUIStore } from '@/stores'
 import { getShortcutBinding, formatShortcutForDisplay } from '@/lib/shortcuts'
 import type { ShortcutAction } from '@/lib/shortcuts'
 import type { Conversation, Message, ConversationCategory } from '@/types'
@@ -141,6 +141,207 @@ function SortableCategoryLabel({
   )
 }
 
+interface ChatSidebarToolbarProps {
+  showArchived: boolean
+  archivedMultiSelect: boolean
+  archivedSelectedCount: number
+  archivedConversationCount: number
+  isAllArchivedSelected: boolean
+  multiSelectMode: boolean
+  selectedCount: number
+  isAllSelected: boolean
+  searchVisible: boolean
+  primaryColor: string
+  secondaryTextColor: string
+  newConversationTitle: string
+  onCancelArchivedSelect: () => void
+  onToggleArchivedSelectAll: () => void
+  onBackFromArchived: () => void
+  onCancelMultiSelect: () => void
+  onToggleSelectAll: () => void
+  onToggleSearch: () => void
+  onShowArchived: () => void
+  onCreateCategory: () => void
+  onCreateConversation: () => void
+  onCollapseSidebar: () => void
+  onBatchUnarchive: () => void
+  onBatchDeleteArchived: () => void
+  onEnterArchivedMultiSelect: () => void
+  onBatchArchive: () => void
+  onBatchDelete: () => void
+  onEnterMultiSelect: () => void
+}
+
+function ChatSidebarToolbar({
+  showArchived,
+  archivedMultiSelect,
+  archivedSelectedCount,
+  archivedConversationCount,
+  isAllArchivedSelected,
+  multiSelectMode,
+  selectedCount,
+  isAllSelected,
+  searchVisible,
+  primaryColor,
+  secondaryTextColor,
+  newConversationTitle,
+  onCancelArchivedSelect,
+  onToggleArchivedSelectAll,
+  onBackFromArchived,
+  onCancelMultiSelect,
+  onToggleSelectAll,
+  onToggleSearch,
+  onShowArchived,
+  onCreateCategory,
+  onCreateConversation,
+  onCollapseSidebar,
+  onBatchUnarchive,
+  onBatchDeleteArchived,
+  onEnterArchivedMultiSelect,
+  onBatchArchive,
+  onBatchDelete,
+  onEnterMultiSelect,
+}: ChatSidebarToolbarProps) {
+  const { t } = useTranslation()
+
+  return (
+    <div
+      className="flex items-center justify-between"
+      style={{
+        padding: '8px 12px',
+        borderBottom: '1px solid var(--border-color)',
+      }}
+    >
+      <div className="flex items-center gap-1">
+        {showArchived ? (
+          archivedMultiSelect ? (
+            <>
+              <Tooltip title={t('common.cancel')}>
+                <Button type="text" icon={<X size={16} />} size="small" onClick={onCancelArchivedSelect} />
+              </Tooltip>
+              <Tooltip title={t('chat.selectAll')}>
+                <Checkbox
+                  checked={isAllArchivedSelected}
+                  indeterminate={archivedSelectedCount > 0 && !isAllArchivedSelected}
+                  onChange={onToggleArchivedSelectAll}
+                  style={{ marginLeft: 4 }}
+                />
+              </Tooltip>
+              <span style={{ fontSize: 12, color: secondaryTextColor }}>{archivedSelectedCount} {t('chat.selected')}</span>
+            </>
+          ) : (
+            <>
+              <Button type="text" icon={<ArrowLeft size={16} />} size="small" onClick={onBackFromArchived} />
+              <span style={{ fontSize: 13, fontWeight: 500 }}>{t('chat.archived')} ({archivedConversationCount})</span>
+            </>
+          )
+        ) : multiSelectMode ? (
+          <>
+            <Tooltip title={t('common.cancel')}>
+              <Button type="text" icon={<X size={16} />} size="small" onClick={onCancelMultiSelect} />
+            </Tooltip>
+            <Tooltip title={t('chat.selectAll')}>
+              <Checkbox
+                checked={isAllSelected}
+                indeterminate={selectedCount > 0 && !isAllSelected}
+                onChange={onToggleSelectAll}
+                style={{ marginLeft: 4 }}
+              />
+            </Tooltip>
+            <span style={{ fontSize: 12, color: secondaryTextColor }}>{selectedCount} {t('chat.selected')}</span>
+          </>
+        ) : (
+          <>
+            <Tooltip title={t('chat.searchPlaceholder')}>
+              <Button
+                type="text"
+                icon={<Search size={16} />}
+                size="small"
+                onClick={onToggleSearch}
+                style={{ color: searchVisible ? primaryColor : undefined }}
+              />
+            </Tooltip>
+            <Tooltip title={t('chat.archived')}>
+              <Button
+                type="text"
+                icon={<Archive size={16} />}
+                size="small"
+                onClick={onShowArchived}
+              />
+            </Tooltip>
+            <Tooltip title={t('chat.createCategory')}>
+              <Button
+                type="text"
+                icon={<FolderPlus size={16} />}
+                size="small"
+                onClick={onCreateCategory}
+              />
+            </Tooltip>
+            <Tooltip title={newConversationTitle}>
+              <Button
+                type="text"
+                icon={<MessageSquarePlus size={16} />}
+                size="small"
+                onClick={onCreateConversation}
+              />
+            </Tooltip>
+            <Tooltip title={t('common.collapse')}>
+              <Button
+                type="text"
+                icon={<PanelLeftClose size={16} />}
+                size="small"
+                onClick={onCollapseSidebar}
+                aria-label={t('common.collapse')}
+              />
+            </Tooltip>
+          </>
+        )}
+      </div>
+      <div>
+        {showArchived ? (
+          archivedMultiSelect ? (
+            <div className="flex items-center gap-1">
+              <Tooltip title={t('chat.unarchive')}>
+                <Button type="text" icon={<Undo2 size={16} />} size="small" disabled={archivedSelectedCount === 0} onClick={onBatchUnarchive} />
+              </Tooltip>
+              <Tooltip title={t('chat.delete')}>
+                <Button type="text" danger icon={<Trash2 size={16} />} size="small" disabled={archivedSelectedCount === 0} onClick={onBatchDeleteArchived} />
+              </Tooltip>
+            </div>
+          ) : (
+            <Tooltip title={t('chat.multiSelect')}>
+              <Button
+                type="text"
+                icon={<ListTodo size={16} />}
+                size="small"
+                onClick={onEnterArchivedMultiSelect}
+              />
+            </Tooltip>
+          )
+        ) : multiSelectMode ? (
+          <div className="flex items-center gap-1">
+            <Tooltip title={t('chat.archive')}>
+              <Button type="text" icon={<Archive size={16} />} size="small" disabled={selectedCount === 0} onClick={onBatchArchive} />
+            </Tooltip>
+            <Tooltip title={t('chat.delete')}>
+              <Button type="text" danger icon={<Trash2 size={16} />} size="small" disabled={selectedCount === 0} onClick={onBatchDelete} />
+            </Tooltip>
+          </div>
+        ) : (
+          <Tooltip title={t('chat.multiSelect')}>
+            <Button
+              type="text"
+              icon={<ListTodo size={16} />}
+              size="small"
+              onClick={onEnterMultiSelect}
+            />
+          </Tooltip>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function ChatSidebar() {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -163,7 +364,7 @@ export function ChatSidebar() {
   const providers = useProviderStore((s) => s.providers)
   const settings = useSettingsStore((s) => s.settings)
   const settingsLoading = useSettingsStore((s) => s.loading)
-
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const categories = useCategoryStore((s) => s.categories)
   const fetchCategories = useCategoryStore((s) => s.fetchCategories)
   const createCategory = useCategoryStore((s) => s.createCategory)
@@ -1164,132 +1365,36 @@ export function ChatSidebar() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div
-        className="flex items-center justify-between"
-        style={{
-          padding: '8px 12px',
-          borderBottom: '1px solid var(--border-color)',
-        }}
-      >
-        <div className="flex items-center gap-1">
-          {showArchived ? (
-            archivedMultiSelect ? (
-              <>
-                <Tooltip title={t('common.cancel')}>
-                  <Button type="text" icon={<X size={16} />} size="small" onClick={() => { setArchivedMultiSelect(false); setArchivedSelectedIds(new Set()) }} />
-                </Tooltip>
-                <Tooltip title={t('chat.selectAll')}>
-                  <Checkbox
-                    checked={isAllArchivedSelected}
-                    indeterminate={archivedSelectedIds.size > 0 && !isAllArchivedSelected}
-                    onChange={handleSelectAllArchived}
-                    style={{ marginLeft: 4 }}
-                  />
-                </Tooltip>
-                <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{archivedSelectedIds.size} {t('chat.selected')}</span>
-              </>
-            ) : (
-              <>
-                <Button type="text" icon={<ArrowLeft size={16} />} size="small" onClick={handleBackFromArchived} />
-                <span style={{ fontSize: 13, fontWeight: 500 }}>{t('chat.archived')} ({archivedConversations.length})</span>
-              </>
-            )
-          ) : multiSelectMode ? (
-            <>
-              <Tooltip title={t('common.cancel')}>
-                <Button type="text" icon={<X size={16} />} size="small" onClick={exitMultiSelect} />
-              </Tooltip>
-              <Tooltip title={t('chat.selectAll')}>
-                <Checkbox
-                  checked={isAllSelected}
-                  indeterminate={selectedIds.size > 0 && !isAllSelected}
-                  onChange={handleSelectAll}
-                  style={{ marginLeft: 4 }}
-                />
-              </Tooltip>
-              <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{selectedIds.size} {t('chat.selected')}</span>
-            </>
-          ) : (
-            <>
-              <Tooltip title={t('chat.searchPlaceholder')}>
-                <Button
-                  type="text"
-                  icon={<Search size={16} />}
-                  size="small"
-                  onClick={() => setSearchVisible((v) => !v)}
-                  style={{ color: searchVisible ? token.colorPrimary : undefined }}
-                />
-              </Tooltip>
-              <Tooltip title={t('chat.archived')}>
-                <Button
-                  type="text"
-                  icon={<Archive size={16} />}
-                  size="small"
-                  onClick={handleShowArchived}
-                />
-              </Tooltip>
-              <Tooltip title={t('chat.createCategory')}>
-                <Button
-                  type="text"
-                  icon={<FolderPlus size={16} />}
-                  size="small"
-                  onClick={() => { setEditingCategory(null); setCategoryModalOpen(true) }}
-                />
-              </Tooltip>
-              <Tooltip title={shortcutHint(t('chat.newConversation'), 'newConversation')}>
-                <Button
-                  type="text"
-                  icon={<MessageSquarePlus size={16} />}
-                  size="small"
-                  onClick={() => { void handleNewConversation() }}
-                />
-              </Tooltip>
-            </>
-          )}
-        </div>
-        <div>
-          {showArchived ? (
-            archivedMultiSelect ? (
-              <div className="flex items-center gap-1">
-                <Tooltip title={t('chat.unarchive')}>
-                  <Button type="text" icon={<Undo2 size={16} />} size="small" disabled={archivedSelectedIds.size === 0} onClick={handleBatchUnarchive} />
-                </Tooltip>
-                <Tooltip title={t('chat.delete')}>
-                  <Button type="text" danger icon={<Trash2 size={16} />} size="small" disabled={archivedSelectedIds.size === 0} onClick={handleBatchDeleteArchived} />
-                </Tooltip>
-              </div>
-            ) : (
-              <Tooltip title={t('chat.multiSelect')}>
-                <Button
-                  type="text"
-                  icon={<ListTodo size={16} />}
-                  size="small"
-                  onClick={() => setArchivedMultiSelect(true)}
-                />
-              </Tooltip>
-            )
-          ) : multiSelectMode ? (
-            <div className="flex items-center gap-1">
-              <Tooltip title={t('chat.archive')}>
-                <Button type="text" icon={<Archive size={16} />} size="small" disabled={selectedIds.size === 0} onClick={handleBatchArchive} />
-              </Tooltip>
-              <Tooltip title={t('chat.delete')}>
-                <Button type="text" danger icon={<Trash2 size={16} />} size="small" disabled={selectedIds.size === 0} onClick={handleBatchDelete} />
-              </Tooltip>
-            </div>
-          ) : (
-            <Tooltip title={t('chat.multiSelect')}>
-              <Button
-                type="text"
-                icon={<ListTodo size={16} />}
-                size="small"
-                onClick={() => setMultiSelectMode(true)}
-              />
-            </Tooltip>
-          )}
-        </div>
-      </div>
+      <ChatSidebarToolbar
+        showArchived={showArchived}
+        archivedMultiSelect={archivedMultiSelect}
+        archivedSelectedCount={archivedSelectedIds.size}
+        archivedConversationCount={archivedConversations.length}
+        isAllArchivedSelected={isAllArchivedSelected}
+        multiSelectMode={multiSelectMode}
+        selectedCount={selectedIds.size}
+        isAllSelected={isAllSelected}
+        searchVisible={searchVisible}
+        primaryColor={token.colorPrimary}
+        secondaryTextColor={token.colorTextSecondary}
+        newConversationTitle={shortcutHint(t('chat.newConversation'), 'newConversation')}
+        onCancelArchivedSelect={() => { setArchivedMultiSelect(false); setArchivedSelectedIds(new Set()) }}
+        onToggleArchivedSelectAll={() => { void handleSelectAllArchived() }}
+        onBackFromArchived={handleBackFromArchived}
+        onCancelMultiSelect={exitMultiSelect}
+        onToggleSelectAll={() => { void handleSelectAll() }}
+        onToggleSearch={() => setSearchVisible((v) => !v)}
+        onShowArchived={handleShowArchived}
+        onCreateCategory={() => { setEditingCategory(null); setCategoryModalOpen(true) }}
+        onCreateConversation={() => { void handleNewConversation() }}
+        onCollapseSidebar={toggleSidebar}
+        onBatchUnarchive={handleBatchUnarchive}
+        onBatchDeleteArchived={handleBatchDeleteArchived}
+        onEnterArchivedMultiSelect={() => setArchivedMultiSelect(true)}
+        onBatchArchive={handleBatchArchive}
+        onBatchDelete={handleBatchDelete}
+        onEnterMultiSelect={() => setMultiSelectMode(true)}
+      />
 
       {/* Collapsible search */}
       {!showArchived && searchVisible && !multiSelectMode && (

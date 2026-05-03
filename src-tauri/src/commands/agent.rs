@@ -286,9 +286,9 @@ fn create_adapter_arc(pt: &ProviderType) -> Result<Arc<dyn ProviderAdapter>, Str
         ProviderType::OpenAIResponses => Ok(Arc::new(
             aqbot_providers::openai_responses::OpenAIResponsesAdapter::new(),
         )),
-        ProviderType::Jina | ProviderType::Cohere | ProviderType::Voyage => Err(
-            "Rerank-only providers cannot be used as agent chat providers".to_string(),
-        ),
+        ProviderType::Jina | ProviderType::Cohere | ProviderType::Voyage => {
+            Err("Rerank-only providers cannot be used as agent chat providers".to_string())
+        }
     }
 }
 
@@ -1084,6 +1084,22 @@ pub async fn agent_query(
                 }
                 SDKMessage::Error { message: err_msg } => {
                     tracing::error!("[agent] Error: {}", err_msg);
+                    if err_msg.contains("reasoning_content")
+                        && err_msg.contains("thinking mode")
+                    {
+                        if let Err(clear_err) =
+                            agent_session::clear_sdk_context_by_conversation_id(&db, &conv_id).await
+                        {
+                            tracing::warn!(
+                                "[agent] Failed to clear stale sdk_context after reasoning error: {}",
+                                clear_err
+                            );
+                        } else {
+                            tracing::info!(
+                                "[agent] Cleared stale sdk_context after reasoning_content error"
+                            );
+                        }
+                    }
                     let _ = app.emit(
                         "agent-error",
                         AgentErrorPayload {

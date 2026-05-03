@@ -51,6 +51,10 @@ pub fn resolve_reasoning(
 
     match style {
         ReasoningStyle::OpenAIReasoningEffort | ReasoningStyle::OpenAIResponsesReasoning => {
+            if matches!(level.as_str(), "off" | "none") {
+                return None;
+            }
+
             Some(ResolvedReasoning {
                 style,
                 level,
@@ -173,6 +177,7 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: ChatContent::Text("hi".to_string()),
+                thinking: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -200,13 +205,12 @@ mod tests {
     }
 
     #[test]
-    fn openai_treats_off_alias_as_none_effort() {
+    fn openai_omits_reasoning_when_disabled() {
         let resolved = resolve_reasoning(
             &request(Some("off"), None),
             ReasoningStyle::OpenAIReasoningEffort,
-        )
-        .expect("reasoning config");
+        );
 
-        assert_eq!(resolved.reasoning_effort.as_deref(), Some("none"));
+        assert!(resolved.is_none());
     }
 }

@@ -243,7 +243,11 @@ fn select_next_active_version(
         Vec::new()
     };
 
-    let mut candidates = if same_model.is_empty() { remaining } else { same_model };
+    let mut candidates = if same_model.is_empty() {
+        remaining
+    } else {
+        same_model
+    };
     candidates.sort_by(compare_version_priority);
     candidates.into_iter().next()
 }
@@ -428,6 +432,7 @@ pub async fn create_assistant_tool_call_message(
     db: &DatabaseConnection,
     conversation_id: &str,
     content: &str,
+    thinking: Option<&str>,
     tool_calls_json: Option<&str>,
     provider_id: &str,
     model_id: &str,
@@ -445,7 +450,7 @@ pub async fn create_assistant_tool_call_message(
         prompt_tokens: Set(None),
         completion_tokens: Set(None),
         attachments: Set("[]".to_string()),
-        thinking: Set(None),
+        thinking: Set(thinking.map(|value| value.to_string())),
         created_at: Set(crate::utils::now_ts()),
         branch_id: Set(None),
         parent_message_id: Set(Some(parent_message_id.to_string())),

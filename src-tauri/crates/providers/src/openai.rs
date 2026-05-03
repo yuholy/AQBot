@@ -85,6 +85,8 @@ struct OpenAIMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
@@ -383,6 +385,52 @@ fn extract_text_content(content: &ChatContent) -> String {
     }
 }
 
+fn extract_think_tags(content: &str) -> Option<String> {
+    let mut remaining = content;
+    let mut extracted = String::new();
+
+    while let Some(start) = remaining.find("<think") {
+        let after_tag = &remaining[start + 6..];
+        let is_tag = after_tag.starts_with('>') || after_tag.starts_with(' ');
+        if !is_tag {
+            break;
+        }
+
+        let Some(open_end_offset) = remaining[start..].find('>') else {
+            break;
+        };
+        let body_start = start + open_end_offset + 1;
+        let Some(close_offset) = remaining[body_start..].find("</think>") else {
+            break;
+        };
+        let body_end = body_start + close_offset;
+        let body = remaining[body_start..body_end].trim();
+        if !body.is_empty() {
+            if !extracted.is_empty() {
+                extracted.push_str("\n\n");
+            }
+            extracted.push_str(body);
+        }
+        remaining = &remaining[body_end + "</think>".len()..];
+    }
+
+    if extracted.is_empty() {
+        None
+    } else {
+        Some(extracted)
+    }
+}
+
+fn assistant_reasoning_content(msg: &ChatMessage) -> Option<String> {
+    msg.thinking
+        .clone()
+        .filter(|value| !value.is_empty())
+        .or_else(|| match &msg.content {
+            ChatContent::Text(text) => extract_think_tags(text),
+            ChatContent::Multipart(_) => None,
+        })
+}
+
 fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAIMessage> {
     messages
         .iter()
@@ -391,6 +439,7 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAIMessage> {
                 "tool" => OpenAIMessage {
                     role: "tool".to_string(),
                     content: Some(serde_json::Value::String(extract_text_content(&msg.content))),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: msg.tool_call_id.clone(),
                 },
@@ -428,6 +477,7 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAIMessage> {
                     OpenAIMessage {
                         role: "assistant".to_string(),
                         content,
+                        reasoning_content: assistant_reasoning_content(msg),
                         tool_calls: msg.tool_calls.as_ref().map(|tcs| {
                             tcs.iter().map(|tc| serde_json::json!({
                                 "id": tc.id,
@@ -467,6 +517,11 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAIMessage> {
                     OpenAIMessage {
                         role: msg.role.clone(),
                         content: Some(content),
+                        reasoning_content: if msg.role == "assistant" {
+                            assistant_reasoning_content(msg)
+                        } else {
+                            None
+                        },
                         tool_calls: None,
                         tool_call_id: None,
                     }
@@ -485,7 +540,10 @@ fn build_request(request: &ChatRequest, messages: &[ChatMessage], stream: bool) 
     let reasoning = resolve_reasoning(request, default_style);
     let reasoning_effort = reasoning.as_ref().and_then(|r| r.reasoning_effort.clone());
     let enable_thinking = reasoning.as_ref().and_then(|r| r.enable_thinking);
-    let sf_thinking_budget = reasoning.as_ref().and_then(|r| r.budget_tokens).filter(|v| *v > 0);
+    let sf_thinking_budget = reasoning
+        .as_ref()
+        .and_then(|r| r.budget_tokens)
+        .filter(|v| *v > 0);
     let has_thinking = reasoning_effort.is_some() || enable_thinking == Some(true);
 
     // Use max_completion_tokens when: model config says so, reasoning mode,
@@ -552,6 +610,7 @@ mod tests {
                     }),
                 },
             ]),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         }]);
@@ -566,6 +625,53 @@ mod tests {
                 }
             ]))
         );
+    }
+
+    #[test]
+    fn build_request_omits_reasoning_effort_when_disabled() {
+        let request = ChatRequest {
+            model: "gpt-5.1".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: ChatContent::Text("hi".to_string()),
+                thinking: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            stream: false,
+            temperature: Some(0.7),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+            tools: None,
+            thinking_budget: None,
+            thinking_level: Some("none".to_string()),
+            reasoning_profile: Some("openai_reasoning_effort".to_string()),
+            use_max_completion_tokens: None,
+            thinking_param_style: None,
+        };
+
+        let body = serde_json::to_value(build_request(&request, &request.messages, false))
+            .expect("request serializes");
+
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["temperature"], json!(0.7));
+        assert_eq!(body["top_p"], json!(0.9));
+    }
+
+    #[test]
+    fn convert_messages_preserves_assistant_reasoning_content() {
+        let messages = convert_messages(&[ChatMessage {
+            role: "assistant".to_string(),
+            content: ChatContent::Text("answer".to_string()),
+            thinking: Some("reasoned privately".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+
+        let body = serde_json::to_value(&messages[0]).expect("message serializes");
+
+        assert_eq!(body["reasoning_content"], json!("reasoned privately"));
+        assert_eq!(body["content"], json!("answer"));
     }
 }
 

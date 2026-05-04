@@ -99,6 +99,8 @@ const CHAT_RENDER_BATCH_PROPS = {
 const USER_SCROLL_INTENT_GRACE_MS = 250;
 const CHAT_PREPARSE_CONTENT_LIMIT = 8000;
 const CHAT_DEFER_RENDER_CONTENT_LIMIT = 12000;
+const CHAT_FORCE_PLAIN_CONTENT_LIMIT = 30000;
+const CHAT_PLAIN_PREVIEW_LIMIT = 6000;
 let registeredHighlightThemeKey: string | null = null;
 
 function compareMessagesForTimeline(left: Message, right: Message): number {
@@ -133,10 +135,14 @@ function shouldPreparseAssistantContent(content: string): boolean {
   return true;
 }
 
-function getLightweightMessagePreview(content: string): string {
+function shouldForcePlainAssistantContent(content: string): boolean {
+  return content.length > CHAT_FORCE_PLAIN_CONTENT_LIMIT;
+}
+
+function getLightweightMessagePreview(content: string, limit = 4000): string {
   const text = stripAqbotTags(content);
-  if (text.length <= 4000) return text;
-  return `${text.slice(0, 4000)}\n\n...`;
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n\n...`;
 }
 
 // ── Attachment preview component ────────────────────────────────────────
@@ -1105,15 +1111,17 @@ const AssistantMarkdown = React.memo(function AssistantMarkdown({
     [codeFontFamily],
   );
   const singleD2Node = useMemo(() => getSingleD2CodeBlockNode(nodes), [nodes]);
+  const forcePlainContent = !isStreaming && shouldForcePlainAssistantContent(content);
+  const [showFullPlainText, setShowFullPlainText] = useState(false);
   const hasDeferredHeavyNodes = useMemo(
-    () => !isStreaming && (
+    () => !forcePlainContent && !isStreaming && (
       containsDeferredHeavyNode(nodes)
       || content.length > CHAT_DEFER_RENDER_CONTENT_LIMIT
       || content.includes('```')
       || content.includes(':::mcp')
       || content.includes('<tool-call')
     ),
-    [content, nodes, isStreaming],
+    [content, forcePlainContent, nodes, isStreaming],
   );
   const [readyToRenderHeavyNodes, setReadyToRenderHeavyNodes] = useState(!hasDeferredHeavyNodes);
   const rendererKey = `${isDarkMode ? 'dark' : 'light'}:${codeBlockDarkTheme}:${codeBlockLightTheme}`;
@@ -1136,6 +1144,12 @@ const AssistantMarkdown = React.memo(function AssistantMarkdown({
       : undefined
   ), [displaySplit.prefix]);
   const rendererContent = displaySplit.prefix ? displaySplit.body : content;
+
+  useEffect(() => {
+    if (forcePlainContent) {
+      setShowFullPlainText(false);
+    }
+  }, [content, forcePlainContent]);
 
   useEffect(() => {
     if (!hasDeferredHeavyNodes) {
@@ -1181,6 +1195,41 @@ const AssistantMarkdown = React.memo(function AssistantMarkdown({
       }
     };
   }, [content, hasDeferredHeavyNodes]);
+
+  if (forcePlainContent) {
+    const plainText = stripAqbotTags(content);
+    const displayText = showFullPlainText
+      ? plainText
+      : getLightweightMessagePreview(content, CHAT_PLAIN_PREVIEW_LIMIT);
+
+    return (
+      <div className="aqbot-chat-markdown">
+        <div
+          className="rounded-lg border px-3 py-3"
+          style={{
+            borderColor: token.colorBorderSecondary,
+            background: isDarkMode ? token.colorBgContainer : token.colorBgElevated,
+          }}
+        >
+          <div style={{ color: token.colorTextSecondary, fontSize: 12, marginBottom: 8 }}>
+            内容较大，已使用纯文本模式以保持界面流畅。
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {displayText}
+          </div>
+          {plainText.length > CHAT_PLAIN_PREVIEW_LIMIT && (
+            <Button
+              size="small"
+              style={{ marginTop: 10 }}
+              onClick={() => setShowFullPlainText((prev) => !prev)}
+            >
+              {showFullPlainText ? '收起纯文本' : '显示完整纯文本'}
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (singleD2Node) {
     return (

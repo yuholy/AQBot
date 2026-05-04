@@ -71,6 +71,7 @@ let _streamUiFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let _activeMessageLoadSeq = 0;
 const _conversationPreferenceSaveSeq = new Map<string, number>();
 const MESSAGE_PAGE_SIZE = 10;
+const FAST_SWITCH_MESSAGE_CACHE_LIMIT = 20;
 interface CachedConversationPage {
   messages: Message[];
   hasOlderMessages: boolean;
@@ -432,11 +433,14 @@ function cacheConversationPage(
   conversationId: string,
   page: CachedConversationPage,
 ) {
+  const cachedMessages = page.messages.length > FAST_SWITCH_MESSAGE_CACHE_LIMIT
+    ? page.messages.slice(-FAST_SWITCH_MESSAGE_CACHE_LIMIT)
+    : page.messages;
   _conversationMessageCache.set(conversationId, {
-    messages: [...page.messages],
-    hasOlderMessages: page.hasOlderMessages,
+    messages: [...cachedMessages],
+    hasOlderMessages: page.hasOlderMessages || cachedMessages.length < page.messages.length,
     totalActiveCount: page.totalActiveCount,
-    oldestLoadedMessageId: page.oldestLoadedMessageId,
+    oldestLoadedMessageId: cachedMessages[0]?.id ?? page.oldestLoadedMessageId,
   });
 }
 

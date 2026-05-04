@@ -35,6 +35,7 @@ pub struct AppState {
 
 mod commands;
 mod context_manager;
+mod external_agents;
 mod indexing;
 mod paths;
 mod tray;
@@ -205,6 +206,17 @@ pub fn run() {
             commands::mcp::list_mcp_tools,
             commands::mcp::discover_mcp_tools,
             commands::mcp::list_tool_executions,
+            // external agents
+            commands::external_agents::list_external_agents,
+            commands::external_agents::create_external_agent,
+            commands::external_agents::update_external_agent,
+            commands::external_agents::delete_external_agent,
+            commands::external_agents::test_external_agent_connection,
+            commands::external_agents::dispatch_external_agent_task,
+            commands::external_agents::retry_external_agent_task,
+            commands::external_agents::sync_external_agent_task,
+            commands::external_agents::list_agent_tasks,
+            commands::external_agents::list_agent_task_events,
             // knowledge
             commands::knowledge::list_knowledge_bases,
             commands::knowledge::create_knowledge_base,
@@ -293,6 +305,7 @@ pub fn run() {
             commands::storage::reset_documents_root,
             // agent
             commands::agent::agent_query,
+            commands::agent::agent_query_claude_code,
             commands::agent::agent_cancel,
             commands::agent::agent_update_session,
             commands::agent::agent_get_session,

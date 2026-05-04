@@ -3,6 +3,8 @@ import { App, Progress, Button } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { isTauri } from '@/lib/invoke';
 
+const UPDATE_CHECKS_ENABLED = false;
+
 /**
  * Shared hook for checking app updates.
  * Used by TitleBar, App.tsx, and AboutPage to avoid duplicated logic.
@@ -13,6 +15,12 @@ export function useUpdateChecker() {
 
   const checkForUpdate = useCallback(async (options?: { silent?: boolean }) => {
     if (!isTauri()) return false;
+    if (!UPDATE_CHECKS_ENABLED) {
+      if (!options?.silent) {
+        message.info(t('settings.updatesDisabled', { defaultValue: 'Updates are disabled in this build.' }));
+      }
+      return false;
+    }
     const silent = options?.silent ?? false;
     try {
       const { check } = await import('@tauri-apps/plugin-updater');

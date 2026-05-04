@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Button, Tooltip, App, theme, Dropdown, Tag, Popover, Checkbox, Badge, Popconfirm } from 'antd';
 import type { MenuProps } from 'antd';
-import { Paperclip, Trash2, Mic, Eraser, Scissors, Globe, Brain, Atom, Plug, SlidersHorizontal, ArrowUp, Square, Check, Zap, ZapOff, Shrink, Upload, GitCompareArrows, X, BookOpen, GripHorizontal, CircleOff, SignalLow, SignalMedium, SignalHigh, Signal, Bot, MessageSquare, Shield, ShieldCheck, ShieldAlert, FolderOpen, ExternalLink } from 'lucide-react';
+import { Paperclip, Trash2, Mic, Eraser, Scissors, Globe, Brain, Atom, Plug, SlidersHorizontal, ArrowUp, Square, Check, Zap, ZapOff, Shrink, Upload, GitCompareArrows, X, BookOpen, GripHorizontal, CircleOff, SignalLow, SignalMedium, SignalHigh, Signal, Bot, MessageSquare, Shield, ShieldCheck, ShieldAlert, FolderOpen, ExternalLink, Code } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useConversationStore, useProviderStore, useSettingsStore, useSearchStore, useMcpStore, useMemoryStore, useKnowledgeStore } from '@/stores';
 import { useUIStore } from '@/stores/uiStore';
@@ -44,6 +44,7 @@ async function fileToAttachmentInput(file: File): Promise<AttachmentInput> {
 
 // In-memory draft cache: persists input text per-conversation across component unmounts
 const _draftCache = new Map<string, string>();
+type AgentExecutorId = 'aqbot-local' | 'claude-code';
 
 export function InputArea() {
   const { t } = useTranslation();
@@ -139,6 +140,7 @@ export function InputArea() {
 
   // Agent permission mode state
   const [agentPermissionMode, setAgentPermissionMode] = useState<string>('default');
+  const [agentExecutorId, setAgentExecutorId] = useState<AgentExecutorId>('aqbot-local');
 
   // Agent working directory state
   const [agentCwd, setAgentCwd] = useState<string | null>(null);
@@ -202,6 +204,22 @@ export function InputArea() {
         .catch(() => {});
     }
   }, [currentMode, activeConversationId]);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      setAgentExecutorId('aqbot-local');
+      return;
+    }
+    const saved = localStorage.getItem(`aqbot:agent-executor:${activeConversationId}`);
+    setAgentExecutorId(saved === 'claude-code' ? 'claude-code' : 'aqbot-local');
+  }, [activeConversationId]);
+
+  const handleAgentExecutorChange = useCallback((executorId: AgentExecutorId) => {
+    setAgentExecutorId(executorId);
+    if (activeConversationId) {
+      localStorage.setItem(`aqbot:agent-executor:${activeConversationId}`, executorId);
+    }
+  }, [activeConversationId]);
 
   // Draft persistence: save old draft & restore new when conversation changes
   useEffect(() => {
@@ -430,6 +448,22 @@ export function InputArea() {
       default: return t('common.permissionDefault');
     }
   }, [agentPermissionMode, t]);
+
+  const agentExecutorItems = useMemo<MenuProps['items']>(() => [
+    {
+      key: 'aqbot-local',
+      label: 'AQBot Local',
+      icon: <Bot size={14} />,
+    },
+    {
+      key: 'claude-code',
+      label: 'Claude Code',
+      icon: <Code size={14} />,
+    },
+  ], []);
+
+  const agentExecutorLabel = agentExecutorId === 'claude-code' ? 'Claude Code' : 'AQBot Local';
+  const agentExecutorIcon = agentExecutorId === 'claude-code' ? <Code size={14} /> : <Bot size={14} />;
 
   // Agent CWD helpers
   const abbreviatePath = useCallback((path: string): string => {
@@ -812,7 +846,11 @@ export function InputArea() {
         }
       });
       if (currentMode === 'agent') {
-        await sendAgentMessage(trimmed, attachments);
+        await sendAgentMessage(trimmed, attachments, {
+          executorId: agentExecutorId,
+          cwd: agentCwd,
+          permissionMode: agentPermissionMode,
+        });
       } else if (companionModels.length > 0) {
         await sendMultiModelMessage(trimmed, companionModels, attachments, searchEnabled ? searchProviderId : null);
       } else {
@@ -835,7 +873,7 @@ export function InputArea() {
         }
       });
     }
-  }, [value, attachedFiles, sendMessage, sendAgentMessage, sendMultiModelMessage, companionModels, activeConversationId, providers, settings, createConversation, messageApi, t, searchEnabled, searchProviderId, currentMode]);
+  }, [value, attachedFiles, sendMessage, sendAgentMessage, sendMultiModelMessage, companionModels, activeConversationId, providers, settings, createConversation, messageApi, t, searchEnabled, searchProviderId, currentMode, agentExecutorId, agentCwd, agentPermissionMode]);
 
   const handleFillLastMessage = useCallback(() => {
     if (streaming) return;
@@ -1509,6 +1547,25 @@ export function InputArea() {
               {currentMode === 'agent' ? <>{t('common.agentMode')} <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginLeft: 2, marginRight: 0 }}>Beta</Tag></> : t('common.chatMode')}
             </Button>
           </Dropdown>
+          {currentMode === 'agent' && (
+            <Dropdown
+              menu={{
+                items: agentExecutorItems,
+                selectedKeys: [agentExecutorId],
+                onClick: ({ key }) => handleAgentExecutorChange(key as AgentExecutorId),
+              }}
+              trigger={['click']}
+            >
+              <Button
+                type="text"
+                size="small"
+                icon={agentExecutorIcon}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+              >
+                {agentExecutorLabel}
+              </Button>
+            </Dropdown>
+          )}
           {currentMode === 'agent' && (
             <Tooltip title={agentCwd || t('common.workingDirectory')}>
               <Button

@@ -7,6 +7,7 @@ pub mod conversation_categories;
 pub mod conversations;
 pub mod desktop;
 pub mod drawing;
+pub mod external_agents;
 pub(crate) mod file_cleanup;
 pub mod files;
 pub mod files_page;

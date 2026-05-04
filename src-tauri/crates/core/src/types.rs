@@ -1667,3 +1667,99 @@ pub struct MarketplaceSkill {
     pub installs: i64,
     pub installed: bool,
 }
+
+// === External Agent Platform ===
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalAgent {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub base_url: Option<String>,
+    pub auth_type: String,
+    pub auth_config_json: Option<String>,
+    pub capabilities_json: String,
+    pub enabled: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateExternalAgentInput {
+    pub name: String,
+    pub kind: String,
+    pub base_url: Option<String>,
+    pub auth_type: Option<String>,
+    pub auth_config_json: Option<String>,
+    pub capabilities_json: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateExternalAgentInput {
+    pub name: Option<String>,
+    pub kind: Option<String>,
+    pub base_url: Option<Option<String>>,
+    pub auth_type: Option<String>,
+    pub auth_config_json: Option<Option<String>>,
+    pub capabilities_json: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTask {
+    pub id: String,
+    pub conversation_id: Option<String>,
+    pub source_message_id: Option<String>,
+    pub external_agent_id: String,
+    pub external_task_id: Option<String>,
+    pub kind: String,
+    pub status: String,
+    pub title: String,
+    pub request_payload_json: String,
+    pub result_payload_json: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskEvent {
+    pub id: String,
+    pub task_id: String,
+    pub event_type: String,
+    pub payload_json: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchExternalAgentTaskInput {
+    pub conversation_id: Option<String>,
+    pub source_message_id: Option<String>,
+    pub external_agent_id: String,
+    pub kind: Option<String>,
+    pub title: String,
+    pub input_text: String,
+    pub context_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchExternalAgentTaskResult {
+    pub task: AgentTask,
+    pub assistant_message: Option<Message>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalAgentConnectionTestResult {
+    pub ok: bool,
+    pub status: Option<u16>,
+    pub message: Option<String>,
+}

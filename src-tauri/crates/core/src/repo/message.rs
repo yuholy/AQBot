@@ -141,8 +141,30 @@ pub async fn create_message(
     parent_message_id: Option<&str>,
     version_index: i32,
 ) -> Result<Message> {
+    create_message_with_created_at(
+        db,
+        conversation_id,
+        role,
+        content,
+        attachments,
+        parent_message_id,
+        version_index,
+        now_ts(),
+    )
+    .await
+}
+
+pub async fn create_message_with_created_at(
+    db: &DatabaseConnection,
+    conversation_id: &str,
+    role: MessageRole,
+    content: &str,
+    attachments: &[Attachment],
+    parent_message_id: Option<&str>,
+    version_index: i32,
+    created_at: i64,
+) -> Result<Message> {
     let id = gen_id();
-    let now = now_ts();
     let role_s = role_str(&role);
     let attachments_json = stringify_attachment_list(attachments)?;
 
@@ -152,7 +174,7 @@ pub async fn create_message(
         role: Set(role_s.to_string()),
         content: Set(content.to_string()),
         attachments: Set(attachments_json),
-        created_at: Set(now),
+        created_at: Set(created_at),
         parent_message_id: Set(parent_message_id.map(|s| s.to_string())),
         version_index: Set(version_index),
         is_active: Set(1),

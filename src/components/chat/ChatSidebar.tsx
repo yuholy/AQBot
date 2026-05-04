@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef, memo } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef, memo, startTransition } from 'react'
 import { Button, Input, App, theme, Tooltip, Avatar, Checkbox, Dropdown, Empty } from 'antd'
 import { MessageSquarePlus, Search, Archive, ListTodo, Trash2, Pencil, Share, Pin, PinOff, Loader, X, Undo2, ArrowLeft, FileImage, FileCode, FileType, FileText, FolderPlus, FolderOpen, GripVertical, ChevronRight, MessageSquareText, PanelLeftClose } from 'lucide-react'
 import { ModelIcon } from '@lobehub/icons'
@@ -1301,7 +1301,9 @@ export function ChatSidebar() {
     if (multiSelectMode) {
       toggleSelect(key)
     } else {
-      setActiveConversation(key)
+      startTransition(() => {
+        setActiveConversation(key)
+      })
     }
   }, [multiSelectMode, toggleSelect, setActiveConversation])
 

@@ -7,6 +7,7 @@ pub mod conversation;
 pub mod conversation_branch;
 pub mod conversation_category;
 pub mod drawing;
+pub mod external_agent;
 pub mod gateway;
 pub mod gateway_diagnostic;
 pub mod gateway_key;

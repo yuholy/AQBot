@@ -97,7 +97,47 @@ const CHAT_RENDER_BATCH_PROPS = {
   liveNodeBuffer: 24,
 } as const;
 const USER_SCROLL_INTENT_GRACE_MS = 250;
+const CHAT_PREPARSE_CONTENT_LIMIT = 8000;
+const CHAT_DEFER_RENDER_CONTENT_LIMIT = 12000;
 let registeredHighlightThemeKey: string | null = null;
+
+function compareMessagesForTimeline(left: Message, right: Message): number {
+  if (left.created_at !== right.created_at) {
+    return left.created_at - right.created_at;
+  }
+
+  if (left.role === 'user' && right.parent_message_id === left.id) {
+    return -1;
+  }
+  if (right.role === 'user' && left.parent_message_id === right.id) {
+    return 1;
+  }
+
+  if (left.role !== right.role) {
+    if (left.role === 'user') return -1;
+    if (right.role === 'user') return 1;
+  }
+
+  if (left.version_index !== right.version_index) {
+    return left.version_index - right.version_index;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function shouldPreparseAssistantContent(content: string): boolean {
+  if (content.length > CHAT_PREPARSE_CONTENT_LIMIT) return false;
+  if (content.includes('```')) return false;
+  if (content.includes(':::mcp')) return false;
+  if (content.includes('<tool-call')) return false;
+  return true;
+}
+
+function getLightweightMessagePreview(content: string): string {
+  const text = stripAqbotTags(content);
+  if (text.length <= 4000) return text;
+  return `${text.slice(0, 4000)}\n\n...`;
+}
 
 // ── Attachment preview component ────────────────────────────────────────
 
@@ -1066,7 +1106,13 @@ const AssistantMarkdown = React.memo(function AssistantMarkdown({
   );
   const singleD2Node = useMemo(() => getSingleD2CodeBlockNode(nodes), [nodes]);
   const hasDeferredHeavyNodes = useMemo(
-    () => !isStreaming && (containsDeferredHeavyNode(nodes) || content.includes('```')),
+    () => !isStreaming && (
+      containsDeferredHeavyNode(nodes)
+      || content.length > CHAT_DEFER_RENDER_CONTENT_LIMIT
+      || content.includes('```')
+      || content.includes(':::mcp')
+      || content.includes('<tool-call')
+    ),
     [content, nodes, isStreaming],
   );
   const [readyToRenderHeavyNodes, setReadyToRenderHeavyNodes] = useState(!hasDeferredHeavyNodes);
@@ -1996,7 +2042,6 @@ export function ChatView() {
     [settings.code_theme, settings.code_theme_light],
   );
   const bubbleListThemeKey = `bubble-list:${isDarkMode ? 'dark' : 'light'}:${settings.code_theme ?? ''}:${settings.code_theme_light ?? ''}`;
-
   // Pre-load Shiki themes into the singleton highlighter when theme settings change
   useEffect(() => {
     const themeKey = codeBlockThemes.join('|');
@@ -2029,7 +2074,6 @@ export function ChatView() {
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId);
   const isTitleGenerating = activeConversationId != null && titleGeneratingConversationId === activeConversationId;
-
   const renderConvIconForChat = useCallback((size: number, modelId?: string | null) => {
     if (!activeConversation) return <Avatar icon={<Bot size={16} />} style={{ background: token.colorPrimary }} size={size} />;
     const customIcon = getConvIcon(activeConversation.id);
@@ -2097,6 +2141,7 @@ export function ChatView() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
+  const [richRenderReady, setRichRenderReady] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageRole, setEditingMessageRole] = useState<'user' | 'assistant' | null>(null);
   const [editingContent, setEditingContent] = useState('');
@@ -2248,8 +2293,29 @@ export function ChatView() {
     pendingScrollConversationIdRef.current = activeConversationId ?? null;
     setShowScrollToBottom(false);
     setStickToBottomState(true);
+    setRichRenderReady(false);
     scrollLayoutMetricsRef.current = { scrollHeight: 0, clientHeight: 0 };
     contentRendererMessageIdsRef.current.clear();
+
+    let idleId: number | null = null;
+    const win = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const timeoutId = window.setTimeout(() => {
+      if (typeof win.requestIdleCallback === 'function') {
+        idleId = win.requestIdleCallback(() => setRichRenderReady(true), { timeout: 500 });
+      } else {
+        setRichRenderReady(true);
+      }
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (idleId !== null) {
+        win.cancelIdleCallback?.(idleId);
+      }
+    };
   }, [activeConversationId, setStickToBottomState]);
 
   useEffect(() => {
@@ -2670,7 +2736,7 @@ export function ChatView() {
 
   // ── Bubble items (only show active messages) ────────────────────────
   const activeMessages = useMemo(
-    () => messages.filter((msg) => msg.is_active !== false),
+    () => [...messages].filter((msg) => msg.is_active !== false).sort(compareMessagesForTimeline),
     [messages],
   );
   const messageById = useMemo(
@@ -2898,6 +2964,10 @@ export function ChatView() {
     nodes: ChatMarkdownNode[];
   }>>(new Map());
   const aiContentNodesById = useMemo(() => {
+    if (!richRenderReady) {
+      return new Map<string, ChatMarkdownNode[]>();
+    }
+
     const cache = aiContentNodesCacheRef.current;
     const next = new Map<string, ChatMarkdownNode[]>();
 
@@ -2918,11 +2988,15 @@ export function ChatView() {
         streaming && msg?.id === streamingMessageId,
         Boolean(msg?.id && contentRendererMessageIdsRef.current.has(msg.id)),
       );
-      if (shouldRenderFromContent) {
-        continue;
-      }
+        if (shouldRenderFromContent) {
+          continue;
+        }
 
-      const messageId = String(item.key);
+        if (!shouldPreparseAssistantContent(String(item.content))) {
+          continue;
+        }
+
+        const messageId = String(item.key);
       const cached = cache.get(messageId);
       if (cached && cached.content === item.content) {
         next.set(messageId, cached.nodes);
@@ -2941,7 +3015,7 @@ export function ChatView() {
     }
 
     return next;
-  }, [bubbleItems, assistantByParentId, messageById, streaming, streamingMessageId]);
+  }, [bubbleItems, assistantByParentId, messageById, richRenderReady, streaming, streamingMessageId]);
   // ── Format timestamp ──────────────────────────────────────────────
   const formatTime = useCallback((ts: number) => {
     return formatChatTime(ts);
@@ -3220,13 +3294,24 @@ export function ChatView() {
           );
         }
 
-        if (shouldRenderStandaloneAssistantError(msg?.status, isNonTabsMultiModel)) {
-          return <>{msgMarker}<Alert type="error" message={content} showIcon /></>;
-        }
+          if (shouldRenderStandaloneAssistantError(msg?.status, isNonTabsMultiModel)) {
+            return <>{msgMarker}<Alert type="error" message={content} showIcon /></>;
+          }
 
-        if (!isAgentMsg && shouldShowInitialDots) {
-          return (
-            <>{msgMarker}<span className="aqbot-streaming-dots" aria-hidden="true">
+          if (!richRenderReady && !isStreaming) {
+            return (
+              <>
+                {msgMarker}
+                <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                  {getLightweightMessagePreview(renderContent)}
+                </div>
+              </>
+            );
+          }
+
+          if (!isAgentMsg && shouldShowInitialDots) {
+            return (
+              <>{msgMarker}<span className="aqbot-streaming-dots" aria-hidden="true">
               <span /><span /><span />
             </span></>
           );
@@ -3341,7 +3426,7 @@ export function ChatView() {
           </div>
         );
       })(),
-      footer: msg && activeConversationId ? (
+      footer: msg && activeConversationId && (richRenderReady || isStreaming) ? (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {footerLoading && !isNonTabsMultiModel && (
             <div
@@ -3388,7 +3473,7 @@ export function ChatView() {
         </div>
       ) : null,
     };
-  }, [activeConversation, activeConversationId, activeMessages, agentPendingPermissions, agentToolCalls, aiContentNodesById, assistantByParentId, codeBlockDarkTheme, codeBlockLightTheme, codeBlockThemes, deleteMessage, displayModeOverrides, formatTime, getBubbleVariant, getModelDisplayInfo, handleDisplayModeOverride, handleEditMessage, handleMultiModelDetected, isDarkMode, messageById, messages, multiModelDoneMessageIds, multiModelParentId, multiModelResponseParents, ragDisplayByMessageId, renderConvIconForChat, settings, streaming, streamingMessageId, switchMessageVersion, t, token.colorPrimary, token.colorTextDescription]);
+  }, [activeConversation, activeConversationId, activeMessages, agentPendingPermissions, agentToolCalls, aiContentNodesById, assistantByParentId, codeBlockDarkTheme, codeBlockLightTheme, codeBlockThemes, deleteMessage, displayModeOverrides, formatTime, getBubbleVariant, getModelDisplayInfo, handleDisplayModeOverride, handleEditMessage, handleMultiModelDetected, isDarkMode, messageById, messages, multiModelDoneMessageIds, multiModelParentId, multiModelResponseParents, ragDisplayByMessageId, renderConvIconForChat, richRenderReady, settings, streaming, streamingMessageId, switchMessageVersion, t, token.colorPrimary, token.colorTextDescription]);
 
   const contextClearRole = useCallback((bubbleData: BubbleItemType) => {
     const msgId = String(bubbleData.content ?? '');

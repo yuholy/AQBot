@@ -583,7 +583,7 @@ export interface DrawingEditInput extends DrawingGenerateInput {
 export interface DrawingMaskEditInput extends DrawingEditInput {
   mask_file_id: string;
 }
-export type SettingsSection = 'providers' | 'defaultModel' | 'conversationSettings' | 'general' | 'display' | 'proxy' | 'shortcuts' | 'data' | 'storage' | 'about' | 'searchProviders' | 'mcpServers' | 'backup';
+export type SettingsSection = 'providers' | 'defaultModel' | 'conversationSettings' | 'general' | 'display' | 'proxy' | 'shortcuts' | 'data' | 'storage' | 'about' | 'searchProviders' | 'mcpServers' | 'externalAgents' | 'backup';
 
 // === Files Module ===
 export type FileCategory = 'images' | 'files';
@@ -673,3 +673,4 @@ export * from './artifact';
 export * from './backup';
 export * from './workspace';
 export * from './agent';
+export * from './externalAgent';

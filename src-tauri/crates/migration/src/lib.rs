@@ -30,6 +30,7 @@ mod m20260417_000001_add_category_default_templates;
 mod m20260428_000001_add_drawing_history;
 mod m20260430_000001_add_conversation_thinking_level;
 mod m20260501_000001_add_knowledge_base_rerank_settings;
+mod m20260504_000001_add_external_agent_platform;
 
 pub struct Migrator;
 
@@ -67,6 +68,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260428_000001_add_drawing_history::Migration),
             Box::new(m20260430_000001_add_conversation_thinking_level::Migration),
             Box::new(m20260501_000001_add_knowledge_base_rerank_settings::Migration),
+            Box::new(m20260504_000001_add_external_agent_platform::Migration),
         ]
     }
 }
@@ -164,6 +166,23 @@ mod tests {
                     .await
                     .expect("check knowledge base rerank column"),
                 "missing knowledge_bases.{column}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn migrator_up_adds_external_agent_platform_tables_on_sqlite() {
+        let db = sqlite_test_db().await;
+
+        Migrator::up(&db, None)
+            .await
+            .expect("run sqlite migrations");
+
+        let manager = SchemaManager::new(&db);
+        for table in ["external_agents", "agent_tasks", "agent_task_events"] {
+            assert!(
+                manager.has_table(table).await.expect("check agent table"),
+                "missing table {table}"
             );
         }
     }

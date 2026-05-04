@@ -270,6 +270,28 @@ export function SkillsPage() {
     }
   }, [installUrl, installSkill, messageApi, t]);
 
+  const handleInstallFromLocal = useCallback(async (target: string) => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        directory: true,
+        multiple: false,
+      });
+
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+
+      setInstalling(selected);
+      const name = await installSkill(selected, target);
+      messageApi.success(t('skills.installSuccess', { name }));
+    } catch (e) {
+      messageApi.error(String(e));
+    } finally {
+      setInstalling(null);
+    }
+  }, [installSkill, messageApi, t]);
+
   const handleInstallFromMarketplace = useCallback(async (repo: string, target: string) => {
     setInstalling(repo);
     try {
@@ -404,6 +426,21 @@ export function SkillsPage() {
               disabled={!installUrl.trim()}
             >
               {t('skills.installFromUrl')}
+            </Button>
+          </Dropdown>
+          <Dropdown
+            menu={{
+              items: INSTALL_TARGETS.map((target) => ({
+                key: target.key,
+                icon: target.icon,
+                label: `${target.desc} (${target.label})`,
+              })),
+              onClick: ({ key }) => handleInstallFromLocal(key),
+            }}
+            trigger={['click']}
+          >
+            <Button icon={<FolderOpen size={14} />}>
+              {t('skills.installFromLocal', { defaultValue: 'Local Folder' })}
             </Button>
           </Dropdown>
           <Button
@@ -700,6 +737,11 @@ export function SkillsPage() {
                 <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
                   Installed: {selectedSkill.manifest.installedAt}
                 </Text>
+                {selectedSkill.manifest.installedVia === 'local' && selectedSkill.manifest.sourceRef && (
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                    {t('skills.localSourceHint', { defaultValue: 'Local source' })}: {selectedSkill.manifest.sourceRef}
+                  </Text>
+                )}
               </div>
             )}
             <div style={{ position: 'relative' }}>

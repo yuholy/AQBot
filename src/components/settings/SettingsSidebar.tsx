@@ -1,5 +1,5 @@
 import { Menu, theme } from 'antd';
-import { Cloud, Settings, Palette, Globe, Zap, Database, Info, Search, Plug, CloudUpload, Bot, HardDrive, MessageSquare, ArrowLeft } from 'lucide-react';
+import { Cloud, Settings, Palette, Globe, Zap, Database, Info, Search, Plug, CloudUpload, Bot, HardDrive, MessageSquare, ArrowLeft, Network } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useUIStore } from '@/stores';
 import type { SettingsSection } from '@/types';
@@ -17,6 +17,7 @@ const MENU_ICONS: Record<SettingsSection, React.ReactNode> = {
   about: <Info size={16} />,
   searchProviders: <Search size={16} />,
   mcpServers: <Plug size={16} />,
+  externalAgents: <Network size={16} />,
   backup: <CloudUpload size={16} />,
 };
 
@@ -28,6 +29,7 @@ const SECTION_KEYS: SettingsSection[] = [
   'defaultModel',
   'searchProviders',
   'mcpServers',
+  'externalAgents',
   'proxy',
   'shortcuts',
   'data',
@@ -46,7 +48,7 @@ export function SettingsSidebar() {
   const items = SECTION_KEYS.map((key) => ({
     key,
     icon: MENU_ICONS[key],
-    label: t([`settings.${key}.title`, `settings.${key}`]),
+    label: key === 'externalAgents' ? '外部 Agent' : t([`settings.${key}.title`, `settings.${key}`]),
   }));
 
   return (

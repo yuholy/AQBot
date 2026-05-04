@@ -10,9 +10,13 @@ use open_agent_sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::env;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{Emitter, State};
+use tokio::process::Command;
 use tokio::sync::RwLock;
+use tokio::time::{timeout, Duration};
 
 /// In-memory map of conversation IDs to actively running agent task IDs.
 /// Used as the source of truth for concurrency checks (more reliable than DB status).
@@ -56,6 +60,7 @@ async fn ensure_agent_assistant_message(
     app: &tauri::AppHandle,
     conv_id: &str,
     user_msg_id: &str,
+    assistant_created_at: i64,
     content: &str,
     current_assistant_msg_id: &mut Option<String>,
     assistant_id_for_task: &Arc<RwLock<Option<String>>>,
@@ -64,7 +69,7 @@ async fn ensure_agent_assistant_message(
         return Some(message_id);
     }
 
-    match message::create_message(
+    match message::create_message_with_created_at(
         db,
         conv_id,
         MessageRole::Assistant,
@@ -72,6 +77,7 @@ async fn ensure_agent_assistant_message(
         &[],
         Some(user_msg_id),
         0,
+        assistant_created_at,
     )
     .await
     {
@@ -102,6 +108,7 @@ async fn persist_agent_partial_content(
     app: &tauri::AppHandle,
     conv_id: &str,
     user_msg_id: &str,
+    assistant_created_at: i64,
     content: &str,
     current_assistant_msg_id: &mut Option<String>,
     assistant_id_for_task: &Arc<RwLock<Option<String>>>,
@@ -111,6 +118,7 @@ async fn persist_agent_partial_content(
         app,
         conv_id,
         user_msg_id,
+        assistant_created_at,
         content,
         current_assistant_msg_id,
         assistant_id_for_task,
@@ -136,6 +144,67 @@ pub struct AgentDonePayload {
     pub num_turns: Option<u32>,
     #[serde(rename = "costUsd")]
     pub cost_usd: Option<f64>,
+}
+
+fn map_claude_code_permission_mode(mode: Option<&str>) -> &'static str {
+    match mode.unwrap_or("default") {
+        "accept_edits" | "acceptEdits" => "acceptEdits",
+        "full_access" | "bypassPermissions" => "bypassPermissions",
+        "plan" => "plan",
+        "auto" => "auto",
+        "dont_ask" | "dontAsk" => "dontAsk",
+        _ => "default",
+    }
+}
+
+fn resolve_claude_command_path() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(path_os) = env::var_os("PATH") {
+        for dir in env::split_paths(&path_os) {
+            candidates.push(dir.join("claude.cmd"));
+            candidates.push(dir.join("claude.exe"));
+            candidates.push(dir.join("claude"));
+            candidates.push(dir.join("claude.ps1"));
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join("AppData").join("Roaming").join("npm").join("claude.cmd"));
+    }
+    candidates.push(PathBuf::from(r"C:\nvm4w\nodejs\claude.cmd"));
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn build_claude_command(resolved_path: &Path) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        let ext = resolved_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if ext == "cmd" || ext == "bat" {
+            let mut command = Command::new("cmd.exe");
+            command.arg("/C").arg(resolved_path);
+            return command;
+        }
+
+        if ext == "ps1" {
+            let mut command = Command::new("powershell.exe");
+            command
+                .arg("-NoProfile")
+                .arg("-ExecutionPolicy")
+                .arg("Bypass")
+                .arg("-File")
+                .arg(resolved_path);
+            return command;
+        }
+    }
+
+    Command::new(resolved_path)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,6 +408,209 @@ fn get_tool_input_summary(tool_name: &str, input: &Value) -> String {
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn agent_query_claude_code(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+    prompt: String,
+    cwd: Option<String>,
+    permission_mode: Option<String>,
+) -> Result<(), String> {
+    if prompt.trim().is_empty() {
+        return Err("Prompt is empty".to_string());
+    }
+
+    let session =
+        agent_session::get_agent_session_by_conversation_id(&state.sea_db, &conversation_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("Agent session not found. Please switch to Agent mode first.")?;
+
+    {
+        let running = RUNNING_AGENTS.lock().unwrap();
+        if running.contains_key(&conversation_id) {
+            return Err("Agent is already running".to_string());
+        }
+    }
+
+    agent_session::update_agent_session_status(&state.sea_db, &session.id, "running")
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let user_message = message::create_message(
+        &state.sea_db,
+        &conversation_id,
+        MessageRole::User,
+        &prompt,
+        &[],
+        None,
+        0,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let pre_conv = conversation::get_conversation(&state.sea_db, &conversation_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let is_first_message = pre_conv.message_count <= 1;
+
+    conversation::increment_message_count(&state.sea_db, &conversation_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if is_first_message {
+        let fallback_title = if prompt.chars().count() > 30 {
+            format!("{}...", prompt.chars().take(30).collect::<String>())
+        } else {
+            prompt.clone()
+        };
+        if conversation::update_conversation_title(&state.sea_db, &conversation_id, &fallback_title)
+            .await
+            .is_ok()
+        {
+            let _ = app.emit(
+                "conversation-title-updated",
+                aqbot_core::types::ConversationTitleUpdatedEvent {
+                    conversation_id: conversation_id.clone(),
+                    title: fallback_title,
+                },
+            );
+        }
+    }
+
+    let effective_cwd = cwd.or(session.cwd.clone()).filter(|s| !s.trim().is_empty());
+    let effective_permission_mode =
+        map_claude_code_permission_mode(permission_mode.as_deref()).to_string();
+
+    let run_id = aqbot_core::utils::gen_id();
+    {
+        let mut running = RUNNING_AGENTS.lock().unwrap();
+        running.insert(conversation_id.clone(), run_id.clone());
+    }
+
+    let db = state.sea_db.clone();
+    let session_id = session.id.clone();
+    let conv_id = conversation_id.clone();
+    let user_msg_id = user_message.id.clone();
+    let assistant_created_at = user_message.created_at + 1;
+
+    tokio::spawn(async move {
+        let _running_guard = RunningAgentGuard {
+            conversation_id: conv_id.clone(),
+            run_id,
+        };
+
+        let mut current_assistant_msg_id: Option<String> = None;
+        let assistant_id_for_task: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
+        let _ = ensure_agent_assistant_message(
+            &db,
+            &app,
+            &conv_id,
+            &user_msg_id,
+            assistant_created_at,
+            "",
+            &mut current_assistant_msg_id,
+            &assistant_id_for_task,
+        )
+        .await;
+
+        let final_text = {
+            if let Some(resolved_claude_path) = resolve_claude_command_path() {
+                let mut command = build_claude_command(&resolved_claude_path);
+                command
+                    .arg("-p")
+                    .arg(&prompt)
+                    .arg("--output-format")
+                    .arg("text")
+                    .arg("--permission-mode")
+                    .arg(&effective_permission_mode);
+
+                let cwd_error = if let Some(ref cwd) = effective_cwd {
+                    let cwd_path = std::path::Path::new(cwd);
+                    if cwd_path.is_dir() {
+                        command.current_dir(cwd_path);
+                        None
+                    } else {
+                        Some(format!(
+                            "Claude Code failed: working directory does not exist or is not a directory.\n\n{}",
+                            cwd
+                        ))
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(cwd_error) = cwd_error {
+                    cwd_error
+                } else {
+                    match timeout(Duration::from_secs(600), command.output()).await {
+                        Ok(Ok(output)) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                            if output.status.success() {
+                                if stdout.is_empty() {
+                                    "Claude Code completed without text output.".to_string()
+                                } else {
+                                    stdout
+                                }
+                            } else {
+                                let code = output
+                                    .status
+                                    .code()
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                format!(
+                                    "Claude Code failed with exit code {}.\n\n{}{}{}",
+                                    code,
+                                    if stdout.is_empty() { "" } else { &stdout },
+                                    if !stdout.is_empty() && !stderr.is_empty() {
+                                        "\n\n"
+                                    } else {
+                                        ""
+                                    },
+                                    if stderr.is_empty() { "" } else { &stderr }
+                                )
+                            }
+                        }
+                        Ok(Err(err)) => format!(
+                            "Claude Code failed: could not start the `claude` command.\n\n{}",
+                            err
+                        ),
+                        Err(_) => "Claude Code timed out after 10 minutes.".to_string(),
+                    }
+                }
+            } else {
+                let path_hint = env::var("PATH").unwrap_or_default();
+                format!(
+                    "Claude Code failed: could not locate the `claude` command.\n\nPATH: {}",
+                    path_hint
+                )
+            }
+        };
+
+        if let Some(ref mid) = current_assistant_msg_id {
+            let _ = message::update_message_content(&db, mid, &final_text).await;
+        }
+
+        let _ = app.emit(
+            "agent-done",
+            AgentDonePayload {
+                conversation_id: conv_id.clone(),
+                assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
+                text: final_text,
+                usage: None,
+                num_turns: Some(1),
+                cost_usd: None,
+            },
+        );
+
+        let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
+    });
+
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn agent_query(
@@ -735,6 +1007,7 @@ pub async fn agent_query(
     let session_id = session.id.clone();
     let conv_id = conversation_id.clone();
     let user_msg_id = user_message.id.clone();
+    let assistant_created_at = user_message.created_at + 1;
     let master_key = state.master_key;
     let title_prov = prov.clone();
     let title_model_id = model_id.clone();
@@ -852,6 +1125,7 @@ pub async fn agent_query(
                             &app,
                             &conv_id,
                             &user_msg_id,
+                            assistant_created_at,
                             &accumulated_text,
                             &mut current_assistant_msg_id,
                             &assistant_id_for_task,
@@ -1129,6 +1403,7 @@ pub async fn agent_query(
                         &app,
                         &conv_id,
                         &user_msg_id,
+                        assistant_created_at,
                         &accumulated_text,
                         &mut current_assistant_msg_id,
                         &assistant_id_for_task,
@@ -1158,6 +1433,7 @@ pub async fn agent_query(
                         &app,
                         &conv_id,
                         &user_msg_id,
+                        assistant_created_at,
                         &accumulated_text,
                         &mut current_assistant_msg_id,
                         &assistant_id_for_task,

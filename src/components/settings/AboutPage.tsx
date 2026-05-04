@@ -1,22 +1,16 @@
-import { Button, Divider, Typography, InputNumber } from 'antd';
-import { Github, Globe, RefreshCw, Terminal } from 'lucide-react';
+import { Button, Divider, Typography } from 'antd';
+import { Github, Globe, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useCallback } from 'react';
 import { isTauri, invoke } from '@/lib/invoke';
 import logoUrl from '@/assets/image/logo.png';
-import { useSettingsStore } from '@/stores';
-import { useUpdateChecker } from '@/hooks/useUpdateChecker';
 import { SettingsGroup } from './SettingsGroup';
 
 const { Text } = Typography;
 
 export function AboutPage() {
   const { t } = useTranslation();
-  const [checking, setChecking] = useState(false);
   const [appVersion, setAppVersion] = useState('...');
-  const { checkForUpdate } = useUpdateChecker();
-  const updateCheckInterval = useSettingsStore((s) => s.settings.update_check_interval ?? 60);
-  const saveSettings = useSettingsStore((s) => s.saveSettings);
 
   useEffect(() => {
     if (isTauri()) {
@@ -25,15 +19,6 @@ export function AboutPage() {
       });
     }
   }, []);
-
-  const handleCheckUpdate = useCallback(async () => {
-    setChecking(true);
-    try {
-      await checkForUpdate();
-    } finally {
-      setChecking(false);
-    }
-  }, [checkForUpdate]);
 
   const rowStyle = { padding: '4px 0' };
 
@@ -100,29 +85,6 @@ export function AboutPage() {
           >
             {t('settings.github')}
           </Button>
-        </div>
-        <Divider style={{ margin: '4px 0' }} />
-        <div style={rowStyle} className="flex items-center justify-between">
-          <span>{t('settings.checkUpdate')}</span>
-          <Button
-            icon={<RefreshCw size={16} className={checking ? 'animate-spin' : ''} />}
-            onClick={handleCheckUpdate}
-            loading={checking}
-          >
-            {t('settings.checkUpdate')}
-          </Button>
-        </div>
-        <Divider style={{ margin: '4px 0' }} />
-        <div style={rowStyle} className="flex items-center justify-between">
-          <span>{t('settings.updateCheckInterval')}</span>
-          <InputNumber
-            min={1}
-            max={1440}
-            value={updateCheckInterval}
-            onChange={(val) => val != null && saveSettings({ update_check_interval: val })}
-            style={{ width: 100 }}
-            addonAfter={t('settings.minutes')}
-          />
         </div>
         {isTauri() && (
           <>

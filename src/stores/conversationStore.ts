@@ -71,6 +71,13 @@ let _streamUiFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let _activeMessageLoadSeq = 0;
 const _conversationPreferenceSaveSeq = new Map<string, number>();
 const MESSAGE_PAGE_SIZE = 10;
+interface CachedConversationPage {
+  messages: Message[];
+  hasOlderMessages: boolean;
+  totalActiveCount: number;
+  oldestLoadedMessageId: string | null;
+}
+const _conversationMessageCache = new Map<string, CachedConversationPage>();
 let _agentStreamSeq = 0;
 let _activeAgentCancel: (() => void) | null = null;
 
@@ -421,6 +428,29 @@ function mergeOlderPages(olderMessages: Message[], currentMessages: Message[]): 
   );
 }
 
+function cacheConversationPage(
+  conversationId: string,
+  page: CachedConversationPage,
+) {
+  _conversationMessageCache.set(conversationId, {
+    messages: [...page.messages],
+    hasOlderMessages: page.hasOlderMessages,
+    totalActiveCount: page.totalActiveCount,
+    oldestLoadedMessageId: page.oldestLoadedMessageId,
+  });
+}
+
+function readCachedConversationPage(conversationId: string): CachedConversationPage | null {
+  const page = _conversationMessageCache.get(conversationId);
+  if (!page) return null;
+  return {
+    messages: [...page.messages],
+    hasOlderMessages: page.hasOlderMessages,
+    totalActiveCount: page.totalActiveCount,
+    oldestLoadedMessageId: page.oldestLoadedMessageId,
+  };
+}
+
 function mergeConversationCollections(
   conversations: Conversation[],
   archivedConversations: Conversation[],
@@ -666,8 +696,12 @@ interface ConversationState {
   batchDelete: (ids: string[]) => Promise<void>;
   batchArchive: (ids: string[]) => Promise<void>;
   sendMessage: (content: string, attachments?: AttachmentInput[], searchProviderId?: string | null) => Promise<void>;
-  /** Send a message in agent mode (non-streaming MVP) */
-  sendAgentMessage: (content: string, attachments?: AttachmentInput[]) => Promise<void>;
+  /** Send a message in agent mode */
+  sendAgentMessage: (
+    content: string,
+    attachments?: AttachmentInput[],
+    options?: { executorId?: 'aqbot-local' | 'claude-code'; cwd?: string | null; permissionMode?: string | null },
+  ) => Promise<void>;
   regenerateMessage: (targetMessageId?: string) => Promise<void>;
   regenerateWithModel: (targetMessageId: string, providerId: string, modelId: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
@@ -1211,6 +1245,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   setActiveConversation: (id) => {
     _activeMessageLoadSeq += 1;
+    const previousConversationId = get().activeConversationId;
+    if (previousConversationId && get().messages.length > 0) {
+      cacheConversationPage(previousConversationId, {
+        messages: get().messages,
+        hasOlderMessages: get().hasOlderMessages,
+        totalActiveCount: get().totalActiveCount,
+        oldestLoadedMessageId: get().oldestLoadedMessageId,
+      });
+    }
     if (!id) {
       set({
         activeConversationId: null,
@@ -1234,18 +1277,20 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       _pendingConversationRefresh.delete(id);
     }
 
+    const cachedPage = readCachedConversationPage(id);
+
     set({
       activeConversationId: id,
-      messages: [],
-      loading: true,
+      messages: cachedPage?.messages ?? [],
+      loading: !cachedPage || cachedPage.messages.length === 0,
       loadingOlder: false,
-      hasOlderMessages: false,
-      totalActiveCount: 0,
-      oldestLoadedMessageId: null,
+      hasOlderMessages: cachedPage?.hasOlderMessages ?? false,
+      totalActiveCount: cachedPage?.totalActiveCount ?? 0,
+      oldestLoadedMessageId: cachedPage?.oldestLoadedMessageId ?? null,
       error: null,
       ...conversationPreferenceStateFromConversation(conversation),
     });
-    get().fetchMessages(id).then(() => {
+    const refreshMessages = () => get().fetchMessages(id).then(() => {
       if (requestSeq !== _activeMessageLoadSeq || get().activeConversationId !== id) {
         return;
       }
@@ -1315,6 +1360,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         _streamBuffer = null;
       }
     });
+    const canDeferRefresh = cachedPage
+      && !needsRefreshAfterStreamDone
+      && _streamBuffer?.conversationId !== id;
+    if (canDeferRefresh) {
+      setTimeout(() => {
+        if (requestSeq === _activeMessageLoadSeq && get().activeConversationId === id) {
+          void refreshMessages();
+        }
+      }, 160);
+    } else {
+      void refreshMessages();
+    }
   },
 
   createConversation: async (title, modelId, providerId, options) => {
@@ -1686,7 +1743,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  sendAgentMessage: async (content, attachments = []) => {
+  sendAgentMessage: async (content, attachments = [], options) => {
     const conversationId = get().activeConversationId;
     if (!conversationId) throw new Error('No active conversation');
 
@@ -1996,13 +2053,22 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         }).then(keepAgentUnlisten((fn) => { unlistenError = fn; }));
       });
 
-      // Invoke the backend command (this creates the real user message in DB)
-      await invoke('agent_query', {
-        conversationId,
-        prompt: content,
-        providerId,
-        modelId,
-      });
+      // Invoke the selected backend executor (this creates the real user message in DB)
+      if (options?.executorId === 'claude-code') {
+        await invoke('agent_query_claude_code', {
+          conversationId,
+          prompt: content,
+          cwd: options.cwd || undefined,
+          permissionMode: options.permissionMode || undefined,
+        });
+      } else {
+        await invoke('agent_query', {
+          conversationId,
+          prompt: content,
+          providerId,
+          modelId,
+        });
+      }
 
       // Wait for agent-done or agent-error event
       await eventPromise;
@@ -2591,7 +2657,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   fetchMessages: async (conversationId, preserveMessageIds = []) => {
     const requestSeq = _activeMessageLoadSeq;
-    set({ loading: true });
+    const shouldShowLoading = get().activeConversationId === conversationId && get().messages.length === 0;
+    set({ loading: shouldShowLoading });
     try {
       const page = await invoke<MessagePage>('list_messages_page', {
         conversationId,
@@ -2604,6 +2671,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
       set((s) => {
         const messages = mergePreservedMessages(page.messages, preserveMessageIds, s.messages);
+        cacheConversationPage(conversationId, {
+          messages,
+          hasOlderMessages: page.has_older,
+          totalActiveCount: page.total_active_count,
+          oldestLoadedMessageId: messages[0]?.id ?? page.oldest_message_id,
+        });
         return {
           messages,
           loading: false,
@@ -2641,7 +2714,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }
 
       set((s) => ({
-        messages: mergeOlderPages(page.messages, s.messages),
+        messages: (() => {
+          const messages = mergeOlderPages(page.messages, s.messages);
+          cacheConversationPage(activeConversationId, {
+            messages,
+            hasOlderMessages: page.has_older,
+            totalActiveCount: page.total_active_count,
+            oldestLoadedMessageId: page.oldest_message_id ?? s.oldestLoadedMessageId,
+          });
+          return messages;
+        })(),
         loadingOlder: false,
         hasOlderMessages: page.has_older,
         totalActiveCount: page.total_active_count,

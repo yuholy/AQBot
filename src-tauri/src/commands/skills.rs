@@ -1,6 +1,7 @@
 use crate::paths::aqbot_home;
 use crate::AppState;
 use aqbot_core::types::*;
+use reqwest::RequestBuilder;
 use std::path::{Path, PathBuf};
 use tauri::State;
 
@@ -10,6 +11,37 @@ fn home_dir() -> PathBuf {
 
 fn skills_dir() -> PathBuf {
     aqbot_home().join("skills")
+}
+
+fn normalize_local_source(source: &str) -> PathBuf {
+    let trimmed = source.trim().trim_matches('"');
+    if let Some(without_scheme) = trimmed.strip_prefix("file://") {
+        #[cfg(target_os = "windows")]
+        {
+            return PathBuf::from(without_scheme.trim_start_matches('/').replace('/', "\\"));
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            return PathBuf::from(without_scheme);
+        }
+    }
+    PathBuf::from(trimmed)
+}
+
+fn github_request(client: &reqwest::Client, url: &str) -> RequestBuilder {
+    let request = client
+        .get(url)
+        .header("User-Agent", "AQBot")
+        .header("Accept", "application/vnd.github+json");
+
+    if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            return request.bearer_auth(trimmed);
+        }
+    }
+
+    request
 }
 
 #[tauri::command]
@@ -142,12 +174,26 @@ pub async fn install_skill(source: String, target: Option<String>) -> Result<Str
     };
     std::fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
 
-    if source.starts_with('/') || source.starts_with('.') {
+    if is_local_skill_source(&source) {
         install_from_local(&source, &target_dir).await
     } else {
         let (owner, repo) = parse_github_source(&source)?;
         install_from_github(&owner, &repo, &target_dir).await
     }
+}
+
+fn is_local_skill_source(source: &str) -> bool {
+    let trimmed = source.trim().trim_matches('"');
+    let path = normalize_local_source(trimmed);
+    path.exists()
+        || path.is_absolute()
+        || trimmed.starts_with('.')
+        || trimmed.starts_with("file://")
+        || trimmed
+            .chars()
+            .nth(1)
+            .is_some_and(|c| c == ':')
+        || trimmed.starts_with("\\\\")
 }
 
 fn parse_github_source(source: &str) -> Result<(String, String), String> {
@@ -177,19 +223,23 @@ async fn install_from_github(owner: &str, repo: &str, target_dir: &Path) -> Resu
     let url = format!("https://api.github.com/repos/{}/{}/zipball", owner, repo);
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .header("User-Agent", "AQBot")
-        .header("Accept", "application/vnd.github+json")
+    let response = github_request(&client, &url)
         .send()
         .await
         .map_err(|e| format!("Failed to download skill: {}", e))?;
 
     if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::FORBIDDEN && body.contains("rate limit") {
+            return Err(
+                "GitHub API rate limit exceeded. Set environment variable GITHUB_TOKEN (or GH_TOKEN) and restart AQBot, or use the skills.sh marketplace source.".to_string(),
+            );
+        }
         return Err(format!(
             "GitHub API returned status {}: {}",
-            response.status(),
-            response.text().await.unwrap_or_default()
+            status,
+            body
         ));
     }
 
@@ -240,12 +290,12 @@ async fn install_from_github(owner: &str, repo: &str, target_dir: &Path) -> Resu
 }
 
 async fn install_from_local(source: &str, target_dir: &Path) -> Result<String, String> {
-    let source_path = PathBuf::from(source);
+    let source_path = normalize_local_source(source);
     if !source_path.exists() {
-        return Err(format!("Source path does not exist: {}", source));
+        return Err(format!("Source path does not exist: {}", source_path.display()));
     }
     if !source_path.is_dir() {
-        return Err(format!("Source path is not a directory: {}", source));
+        return Err(format!("Source path is not a directory: {}", source_path.display()));
     }
 
     let name = source_path
@@ -263,7 +313,7 @@ async fn install_from_local(source: &str, target_dir: &Path) -> Result<String, S
 
     let manifest = serde_json::json!({
         "source_kind": "local",
-        "source_ref": source,
+        "source_ref": source_path.to_string_lossy().to_string(),
         "installed_at": chrono::Utc::now().to_rfc3339(),
         "installed_via": "local"
     });
@@ -416,16 +466,20 @@ pub async fn search_marketplace(
             );
 
             let client = reqwest::Client::new();
-            let response = client
-                .get(&url)
-                .header("User-Agent", "AQBot")
-                .header("Accept", "application/vnd.github.v3+json")
+            let response = github_request(&client, &url)
                 .send()
                 .await
                 .map_err(|e| format!("Search failed: {}", e))?;
 
             if !response.status().is_success() {
-                return Err(format!("GitHub API error: {}", response.status()));
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                if status == reqwest::StatusCode::FORBIDDEN && body.contains("rate limit") {
+                    return Err(
+                        "GitHub API rate limit exceeded. Set GITHUB_TOKEN (or GH_TOKEN) and restart AQBot, or switch the marketplace source to skills.sh.".to_string(),
+                    );
+                }
+                return Err(format!("GitHub API error {}: {}", status, body));
             }
 
             let body: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
@@ -542,10 +596,7 @@ pub async fn check_skill_updates() -> Result<Vec<SkillUpdateInfo>, String> {
         );
 
         let client = reqwest::Client::new();
-        let response = client
-            .get(&url)
-            .header("User-Agent", "AQBot")
-            .header("Accept", "application/vnd.github.v3+json")
+        let response = github_request(&client, &url)
             .send()
             .await;
 

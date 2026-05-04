@@ -4,6 +4,9 @@
 
 This document defines a modular design for evolving AQBot into a personal AI assistant platform while keeping the existing codebase stable and minimizing changes to upstream submodules.
 
+For the concrete connector protocol, task shape, status contract, result shape,
+and UI rules, see [Agent Connector Standard](./agent-connector-standard.md).
+
 The design goal is not to merge external agent runtimes deeply into AQBot. Instead, AQBot should become the user's control plane:
 
 - A unified desktop entrypoint.
@@ -826,4 +829,3 @@ Do not implement these in the first slice:
 - Dedicated tasks dashboard.
 
 These should come after the connector and task model prove themselves.
-

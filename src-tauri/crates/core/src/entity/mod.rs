@@ -39,5 +39,8 @@ pub mod retrieval_hits;
 pub mod stored_files;
 
 pub mod agent_sessions;
+pub mod agent_task_events;
+pub mod agent_tasks;
+pub mod external_agents;
 
 pub use sea_orm;

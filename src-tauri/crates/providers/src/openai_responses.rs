@@ -520,7 +520,7 @@ impl ProviderAdapter for OpenAIResponsesAdapter {
         )
         .send()
         .await
-        .map_err(|e| AQBotError::Provider(format!("Request failed: {e}")))?;
+        .map_err(|e| AQBotError::Provider(crate::format_reqwest_error("Request failed", &e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -594,8 +594,9 @@ impl ProviderAdapter for OpenAIResponsesAdapter {
                     return;
                 }
                 Err(e) => {
-                    let _ = tx
-                        .unbounded_send(Err(AQBotError::Provider(format!("Request failed: {e}"))));
+                    let _ = tx.unbounded_send(Err(AQBotError::Provider(
+                        crate::format_reqwest_error("Request failed", &e),
+                    )));
                     return;
                 }
             };
@@ -961,7 +962,7 @@ impl ProviderAdapter for OpenAIResponsesAdapter {
         )
         .send()
         .await
-        .map_err(|e| AQBotError::Provider(format!("Request failed: {e}")))?;
+        .map_err(|e| AQBotError::Provider(crate::format_reqwest_error("Request failed", &e)))?;
 
         if !resp.status().is_success() {
             let s = resp.status();
@@ -1036,7 +1037,7 @@ impl ProviderAdapter for OpenAIResponsesAdapter {
         )
         .send()
         .await
-        .map_err(|e| AQBotError::Provider(format!("Request failed: {e}")))?;
+        .map_err(|e| AQBotError::Provider(crate::format_reqwest_error("Request failed", &e)))?;
 
         if !resp.status().is_success() {
             let s = resp.status();
@@ -1070,14 +1071,14 @@ mod tests {
             ChatMessage {
                 role: "system".to_string(),
                 content: ChatContent::Text("You are helpful.".to_string()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
             ChatMessage {
                 role: "user".to_string(),
                 content: ChatContent::Text("Hello".to_string()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -1097,7 +1098,7 @@ mod tests {
             ChatMessage {
                 role: "assistant".to_string(),
                 content: ChatContent::Text("".to_string()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: Some(vec![ToolCall {
                     id: "call_1".to_string(),
                     call_type: "function".to_string(),
@@ -1111,7 +1112,7 @@ mod tests {
             ChatMessage {
                 role: "tool".to_string(),
                 content: ChatContent::Text("Sunny, 72F".to_string()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: Some("call_1".to_string()),
             },
@@ -1159,7 +1160,7 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: ChatContent::Text("hi".to_string()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -1187,7 +1188,7 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: ChatContent::Text("hi".to_string()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -1213,7 +1214,7 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: ChatContent::Text("hi".to_string()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],

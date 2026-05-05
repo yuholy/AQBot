@@ -37,6 +37,10 @@ pub enum ProviderType {
     OpenAI,
     #[serde(rename = "openai_responses")]
     OpenAIResponses,
+    DeepSeek,
+    XAI,
+    GLM,
+    SiliconFlow,
     Anthropic,
     Gemini,
     Jina,
@@ -695,6 +699,8 @@ pub struct AppSettings {
     /// Chat minimap / navigation overlay.
     pub chat_minimap_enabled: bool,
     pub chat_minimap_style: String,
+    /// Include image models in the conversation model selector.
+    pub show_image_models_in_model_selector: bool,
     /// Multi-model response display mode: "tabs" | "side-by-side" | "stacked".
     pub multi_model_display_mode: String,
     /// Render user messages as Markdown (like AI messages). Default: false.
@@ -795,6 +801,7 @@ impl Default for AppSettings {
             default_system_prompt: None,
             chat_minimap_enabled: false,
             chat_minimap_style: "faq".to_string(),
+            show_image_models_in_model_selector: false,
             multi_model_display_mode: "tabs".to_string(),
             render_user_markdown: false,
         }
@@ -867,9 +874,9 @@ pub struct ToolCallFunction {
 pub struct ChatMessage {
     pub role: String,
     pub content: ChatContent,
-    /// For assistant messages: raw thinking/reasoning content returned by the model.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<String>,
+    /// Provider-native reasoning/thinking content for APIs that require it in history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     /// For assistant messages: tool calls the model wants to make
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,

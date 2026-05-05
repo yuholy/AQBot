@@ -406,6 +406,8 @@
     "chatMinimapStyle": "導航樣式",
     "chatMinimapFaq": "問題索引",
     "chatMinimapSticky": "浮動指示器",
+    "additionalFeatures": "附加功能",
+    "showImageModelsInModelSelector": "模型選擇器中顯示繪畫模型",
     "multiModelDisplayMode": "多模型顯示模式",
     "multiModelDisplayModeDesc": "設定多模型同時回答時的佈局方式",
     "multiModelDisplayModeTabs": "標籤切換",
@@ -822,6 +824,7 @@
       "restartLater": "稍後重啟"
     },
     "filterProviders": "搜尋供應商...",
+    "builtinProviderBadge": "內建",
     "initProviders": "初始化供應商",
     "initProvidersDesc": "將根據內建預設初始化系統供應商。對於已存在的同名供應商，可選擇覆寫其名稱、端點格式、Base URL 和 API 路徑為官方值，或僅新增缺失的供應商。",
     "initOverwriteHint": "覆寫模式：已有供應商的設定將被重置為官方預設值（API 金鑰不受影響）",

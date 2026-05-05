@@ -406,6 +406,8 @@
     "chatMinimapStyle": "Style de navigation",
     "chatMinimapFaq": "Index des questions",
     "chatMinimapSticky": "Indicateur flottant",
+    "additionalFeatures": "Fonctionnalités supplémentaires",
+    "showImageModelsInModelSelector": "Afficher les modèles d'image dans le sélecteur de modèles",
     "multiModelDisplayMode": "Affichage multi-modèle",
     "multiModelDisplayModeDesc": "Définir la disposition pour les réponses multi-modèle",
     "multiModelDisplayModeTabs": "Onglets",
@@ -822,6 +824,7 @@
       "restartLater": "Restart Later"
     },
     "filterProviders": "Rechercher des fournisseurs…",
+    "builtinProviderBadge": "Intégré",
     "initProviders": "Initialiser les fournisseurs",
     "initProvidersDesc": "Initialiser les fournisseurs système à partir des préréglages intégrés. Pour les fournisseurs existants avec des noms correspondants, vous pouvez écraser leur nom, format du point de terminaison, URL de base et chemin API avec les valeurs officielles, ou uniquement ajouter les fournisseurs manquants.",
     "initOverwriteHint": "Mode écrasement : les configurations de fournisseurs existantes seront réinitialisées aux valeurs officielles par défaut (les clés API sont préservées)",

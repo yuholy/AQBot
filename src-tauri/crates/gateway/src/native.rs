@@ -1180,6 +1180,7 @@ mod tests {
                 api_host: api_host.into(),
                 api_path: None,
                 enabled: true,
+                builtin_id: None,
             },
         )
         .await
@@ -1241,6 +1242,7 @@ mod tests {
                 api_host: api_host.into(),
                 api_path: None,
                 enabled: true,
+                builtin_id: None,
             },
         )
         .await

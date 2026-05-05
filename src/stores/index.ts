@@ -15,3 +15,4 @@ export { useAgentStore } from './agentStore';
 export { useExternalAgentStore } from './externalAgentStore';
 export { useSkillStore } from './skillStore';
 export { useDrawingStore } from './drawingStore';
+export { useDrawingSettingsStore } from './drawingSettingsStore';

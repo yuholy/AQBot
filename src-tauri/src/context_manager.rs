@@ -80,7 +80,7 @@ pub fn build_context(
                 "[对话历史摘要 / Conversation History Summary]\n{}",
                 summary_text
             )),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -165,7 +165,7 @@ pub fn build_summary_prompt(request: &SummarizationRequest) -> Vec<ChatMessage> 
     messages.push(ChatMessage {
         role: "system".to_string(),
         content: ChatContent::Text(instruction.to_string()),
-        thinking: None,
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
     });
@@ -174,7 +174,7 @@ pub fn build_summary_prompt(request: &SummarizationRequest) -> Vec<ChatMessage> 
         messages.push(ChatMessage {
             role: "user".to_string(),
             content: ChatContent::Text(format!("已有摘要：\n{}", summary)),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -212,7 +212,7 @@ pub fn build_summary_prompt(request: &SummarizationRequest) -> Vec<ChatMessage> 
             },
             conversation_text.join("\n")
         )),
-        thinking: None,
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
     });
@@ -230,7 +230,7 @@ pub fn build_summary_prompt_with_custom(
     messages.push(ChatMessage {
         role: "system".to_string(),
         content: ChatContent::Text(custom_prompt.to_string()),
-        thinking: None,
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
     });
@@ -239,7 +239,7 @@ pub fn build_summary_prompt_with_custom(
         messages.push(ChatMessage {
             role: "user".to_string(),
             content: ChatContent::Text(format!("已有摘要：\n{}", summary)),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -277,7 +277,7 @@ pub fn build_summary_prompt_with_custom(
             },
             conversation_text.join("\n")
         )),
-        thinking: None,
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
     });

@@ -406,6 +406,8 @@
     "chatMinimapStyle": "نمط التنقل",
     "chatMinimapFaq": "فهرس الأسئلة",
     "chatMinimapSticky": "مؤشر عائم",
+    "additionalFeatures": "ميزات إضافية",
+    "showImageModelsInModelSelector": "إظهار نماذج الصور في محدد النماذج",
     "multiModelDisplayMode": "وضع عرض النماذج المتعددة",
     "multiModelDisplayModeDesc": "تعيين تخطيط الاستجابات متعددة النماذج",
     "multiModelDisplayModeTabs": "علامات التبويب",
@@ -822,6 +824,7 @@
       "restartLater": "Restart Later"
     },
     "filterProviders": "البحث عن مزوّدين...",
+    "builtinProviderBadge": "مدمج",
     "initProviders": "تهيئة المزوّدين",
     "initProvidersDesc": "تهيئة مزوّدي النظام من الإعدادات المسبقة المدمجة. يمكن الكتابة فوق المزوّدين الموجودين أو إضافة المفقودين فقط.",
     "initOverwriteHint": "وضع الكتابة: ستُعاد تعيين إعدادات المزوّدين الموجودين إلى الافتراضيات الرسمية (تُحفظ مفاتيح API)",

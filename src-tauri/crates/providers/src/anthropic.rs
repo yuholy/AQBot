@@ -364,7 +364,7 @@ mod tests {
                     }),
                 },
             ]),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }]);
@@ -391,7 +391,7 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: ChatContent::Text("hi".to_string()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],

@@ -1,19 +1,26 @@
 pub mod adapter;
 pub mod anthropic;
 pub mod cohere;
+pub mod custom_openai;
+pub mod deepseek;
 pub mod gemini;
+pub mod glm;
 pub mod jina;
 pub mod openai;
+pub mod openai_compat;
 pub mod openai_images;
 pub mod openai_responses;
 pub mod reasoning;
 pub mod registry;
+pub mod siliconflow;
 pub mod voyage;
+pub mod xai;
 
 use aqbot_core::error::{AQBotError, Result};
 use aqbot_core::types::*;
 use async_trait::async_trait;
 use futures::Stream;
+use std::error::Error as _;
 use std::pin::Pin;
 
 #[async_trait]
@@ -71,6 +78,7 @@ pub fn default_version_for_type(provider_type: &ProviderType) -> &'static str {
     match provider_type {
         ProviderType::Gemini => "/v1beta",
         ProviderType::Cohere => "/v2",
+        ProviderType::GLM => "/v4",
         _ => "/v1",
     }
 }
@@ -190,7 +198,19 @@ pub(crate) fn parse_base64_data_url(url: &str) -> Option<(String, String)> {
 /// - "http"/"socks5": use explicit proxy with address/port
 /// - None or "none": disable all proxies
 pub fn build_http_client(proxy_config: Option<&ProviderProxyConfig>) -> Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder().use_rustls_tls();
+    let mut builder = reqwest::Client::builder();
+
+    #[cfg(target_os = "windows")]
+    {
+        // Prefer the OS trust store on Windows so enterprise / CDN-issued cert
+        // chains behave the same way they do in the rest of the desktop app.
+        builder = builder.use_native_tls();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        builder = builder.use_rustls_tls();
+    }
 
     if let Some(config) = proxy_config {
         match config.proxy_type.as_deref() {
@@ -233,6 +253,24 @@ pub fn build_http_client(proxy_config: Option<&ProviderProxyConfig>) -> Result<r
 
 pub fn build_default_http_client() -> Result<reqwest::Client> {
     build_http_client(None)
+}
+
+pub fn format_reqwest_error(prefix: &str, err: &reqwest::Error) -> String {
+    let mut message = format!("{prefix}: {err}");
+    let mut causes = Vec::new();
+    let mut current = err.source();
+
+    while let Some(source) = current {
+        causes.push(source.to_string());
+        current = source.source();
+    }
+
+    if !causes.is_empty() {
+        message.push_str(" | caused by: ");
+        message.push_str(&causes.join(" | "));
+    }
+
+    message
 }
 
 /// Default User-Agent: `AQBot-{os}_{arch}/{version}`

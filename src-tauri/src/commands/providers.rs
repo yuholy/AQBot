@@ -160,12 +160,16 @@ pub async fn validate_provider_key(
     let provider_type_str = match provider.provider_type {
         ProviderType::OpenAI => "openai",
         ProviderType::OpenAIResponses => "openai_responses",
+        ProviderType::DeepSeek => "deepseek",
+        ProviderType::XAI => "xai",
+        ProviderType::GLM => "glm",
+        ProviderType::SiliconFlow => "siliconflow",
         ProviderType::Anthropic => "anthropic",
         ProviderType::Gemini => "gemini",
         ProviderType::Jina => "jina",
         ProviderType::Cohere => "cohere",
         ProviderType::Voyage => "voyage",
-        ProviderType::Custom => "openai",
+        ProviderType::Custom => "custom",
     };
     let adapter = registry
         .get(provider_type_str)
@@ -273,12 +277,16 @@ pub async fn fetch_remote_models(
     let provider_type_str = match provider.provider_type {
         ProviderType::OpenAI => "openai",
         ProviderType::OpenAIResponses => "openai_responses",
+        ProviderType::DeepSeek => "deepseek",
+        ProviderType::XAI => "xai",
+        ProviderType::GLM => "glm",
+        ProviderType::SiliconFlow => "siliconflow",
         ProviderType::Anthropic => "anthropic",
         ProviderType::Gemini => "gemini",
         ProviderType::Jina => "jina",
         ProviderType::Cohere => "cohere",
         ProviderType::Voyage => "voyage",
-        ProviderType::Custom => "openai",
+        ProviderType::Custom => "custom",
     };
     let adapter = registry
         .get(provider_type_str)
@@ -329,12 +337,16 @@ pub async fn test_model(
     let provider_type_str = match provider.provider_type {
         ProviderType::OpenAI => "openai",
         ProviderType::OpenAIResponses => "openai_responses",
+        ProviderType::DeepSeek => "deepseek",
+        ProviderType::XAI => "xai",
+        ProviderType::GLM => "glm",
+        ProviderType::SiliconFlow => "siliconflow",
         ProviderType::Anthropic => "anthropic",
         ProviderType::Gemini => "gemini",
         ProviderType::Jina => "jina",
         ProviderType::Cohere => "cohere",
         ProviderType::Voyage => "voyage",
-        ProviderType::Custom => "openai",
+        ProviderType::Custom => "custom",
     };
     let adapter = registry
         .get(provider_type_str)
@@ -384,7 +396,7 @@ pub async fn test_model(
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: ChatContent::Text("hi".into()),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],

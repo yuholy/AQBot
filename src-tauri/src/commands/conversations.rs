@@ -13,13 +13,26 @@ fn provider_type_to_registry_key(pt: &ProviderType) -> &'static str {
     match pt {
         ProviderType::OpenAI => "openai",
         ProviderType::OpenAIResponses => "openai_responses",
+        ProviderType::DeepSeek => "deepseek",
+        ProviderType::XAI => "xai",
+        ProviderType::GLM => "glm",
+        ProviderType::SiliconFlow => "siliconflow",
         ProviderType::Anthropic => "anthropic",
         ProviderType::Gemini => "gemini",
         ProviderType::Jina => "jina",
         ProviderType::Cohere => "cohere",
         ProviderType::Voyage => "voyage",
-        ProviderType::Custom => "openai", // Custom providers use OpenAI-compatible API
+        ProviderType::Custom => "custom",
     }
+}
+
+async fn resolve_command_provider_id(
+    db: &DatabaseConnection,
+    provider_id: &str,
+) -> Result<String, String> {
+    aqbot_core::repo::provider::resolve_provider_id(db, provider_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Resolve effective system prompt with priority: Conversation → Category → Global Default
@@ -163,11 +176,11 @@ fn strip_think_tags(content: &str) -> String {
 
 fn extract_think_tags(content: &str) -> Option<String> {
     let mut remaining = content;
-    let mut extracted = String::new();
+    let mut blocks = Vec::new();
 
     while let Some(start) = remaining.find("<think") {
-        let after_tag = &remaining[start + 6..];
-        let is_tag = after_tag.starts_with('>') || after_tag.starts_with(' ');
+        let after_tag_name = &remaining[start + 6..];
+        let is_tag = after_tag_name.starts_with('>') || after_tag_name.starts_with(' ');
         if !is_tag {
             break;
         }
@@ -175,25 +188,22 @@ fn extract_think_tags(content: &str) -> Option<String> {
         let Some(open_end_offset) = remaining[start..].find('>') else {
             break;
         };
-        let body_start = start + open_end_offset + 1;
-        let Some(close_offset) = remaining[body_start..].find("</think>") else {
+        let content_start = start + open_end_offset + 1;
+        let Some(close_offset) = remaining[content_start..].find("</think>") else {
             break;
         };
-        let body_end = body_start + close_offset;
-        let body = remaining[body_start..body_end].trim();
-        if !body.is_empty() {
-            if !extracted.is_empty() {
-                extracted.push_str("\n\n");
-            }
-            extracted.push_str(body);
+
+        let block = remaining[content_start..content_start + close_offset].trim();
+        if !block.is_empty() {
+            blocks.push(block.to_string());
         }
-        remaining = &remaining[body_end + "</think>".len()..];
+        remaining = &remaining[content_start + close_offset + "</think>".len()..];
     }
 
-    if extracted.is_empty() {
+    if blocks.is_empty() {
         None
     } else {
-        Some(extracted)
+        Some(blocks.join("\n\n"))
     }
 }
 
@@ -433,7 +443,7 @@ fn chat_message_from_message(
         }
         .to_string(),
         content: build_message_content(file_store, message)?,
-        thinking: message
+        reasoning_content: message
             .thinking
             .clone()
             .filter(|value| !value.is_empty())
@@ -464,11 +474,13 @@ pub async fn create_conversation(
     provider_id: String,
     system_prompt: Option<String>,
 ) -> Result<Conversation, String> {
+    let real_provider_id = resolve_command_provider_id(&state.sea_db, &provider_id).await?;
+
     aqbot_core::repo::conversation::create_conversation(
         &state.sea_db,
         &title,
         &model_id,
-        &provider_id,
+        &real_provider_id,
         system_prompt.as_deref(),
     )
     .await
@@ -479,8 +491,13 @@ pub async fn create_conversation(
 pub async fn update_conversation(
     state: State<'_, AppState>,
     id: String,
-    input: UpdateConversationInput,
+    mut input: UpdateConversationInput,
 ) -> Result<Conversation, String> {
+    if let Some(provider_id) = input.provider_id.as_deref() {
+        let real_provider_id = resolve_command_provider_id(&state.sea_db, provider_id).await?;
+        input.provider_id = Some(real_provider_id);
+    }
+
     aqbot_core::repo::conversation::update_conversation(&state.sea_db, &id, input)
         .await
         .map_err(|e| e.to_string())
@@ -1174,14 +1191,14 @@ async fn generate_ai_title_with(
         ChatMessage {
             role: "system".to_string(),
             content: ChatContent::Text(prompt.to_string()),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         },
         ChatMessage {
             role: "user".to_string(),
             content: ChatContent::Text(conversation_text),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         },
@@ -1626,7 +1643,7 @@ fn spawn_stream_task(
             chat_messages.push(ChatMessage {
                 role: "assistant".to_string(),
                 content: ChatContent::Text(stripped_content),
-                thinking: extract_think_tags(&content),
+                reasoning_content: extract_think_tags(&content),
                 tool_calls: Some(tool_calls.clone()),
                 tool_call_id: None,
             });
@@ -1766,7 +1783,7 @@ fn spawn_stream_task(
                 chat_messages.push(ChatMessage {
                     role: "tool".to_string(),
                     content: ChatContent::Text(result_content.to_string()),
-                    thinking: None,
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: Some(tc.id.clone()),
                 });
@@ -2048,7 +2065,7 @@ pub async fn send_message(
                 "system".to_string()
             },
             content: ChatContent::Text(sys.clone()),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -2097,7 +2114,7 @@ pub async fn send_message(
                 "The following reference materials may be relevant to the user's question. Use them if helpful:\n\n{}",
                 rag_result.context_parts.join("\n\n")
             )),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -2430,7 +2447,7 @@ pub async fn regenerate_message(
         chat_messages.push(ChatMessage {
             role: "system".to_string(),
             content: ChatContent::Text(sys.clone()),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -2473,7 +2490,7 @@ pub async fn regenerate_message(
                     "The following reference materials may be relevant to the user's question. Use them if helpful:\n\n{}",
                     rag_result.context_parts.join("\n\n")
                 )),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
@@ -2737,7 +2754,7 @@ pub async fn regenerate_with_model(
         chat_messages.push(ChatMessage {
             role: "system".to_string(),
             content: ChatContent::Text(sys.clone()),
-            thinking: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -2785,7 +2802,7 @@ pub async fn regenerate_with_model(
                     "The following reference materials may be relevant to the user's question. Use them if helpful:\n\n{}",
                     rag_result.context_parts.join("\n\n")
                 )),
-                thinking: None,
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
@@ -3458,6 +3475,22 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn command_provider_resolution_materializes_builtin_provider() {
+        let db = aqbot_core::db::create_test_pool().await.unwrap().conn;
+
+        let real_id = resolve_command_provider_id(&db, "builtin_deepseek")
+            .await
+            .unwrap();
+
+        assert_ne!(real_id, "builtin_deepseek");
+        let provider = aqbot_core::repo::provider::get_provider(&db, &real_id)
+            .await
+            .unwrap();
+        assert_eq!(provider.builtin_id.as_deref(), Some("deepseek"));
+        assert_eq!(provider.provider_type, ProviderType::DeepSeek);
+    }
+
     #[test]
     fn title_summary_uses_reasoning_safe_default_max_tokens() {
         let mut settings = AppSettings::default();
@@ -3477,6 +3510,39 @@ mod tests {
             "项目排期讨论"
         );
         assert_eq!(clean_generated_title("\"API 调试记录\""), "API 调试记录");
+    }
+
+    #[test]
+    fn assistant_history_extracts_thinking_into_reasoning_content() {
+        let file_store = aqbot_core::file_store::FileStore::new();
+        let message = Message {
+            id: "msg-1".into(),
+            conversation_id: "conv-1".into(),
+            role: MessageRole::Assistant,
+            content: "<think totalMs=\"123\">\nhidden thinking\n</think>\n\nfinal answer".into(),
+            provider_id: None,
+            model_id: None,
+            token_count: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            tokens_per_second: None,
+            first_token_latency_ms: None,
+            attachments: Vec::new(),
+            thinking: None,
+            tool_calls_json: None,
+            tool_call_id: None,
+            created_at: 0,
+            parent_message_id: None,
+            version_index: 0,
+            is_active: true,
+            status: "complete".into(),
+        };
+
+        let chat_message = chat_message_from_message(&file_store, &message).unwrap();
+        let serialized = serde_json::to_value(chat_message).unwrap();
+
+        assert_eq!(serialized["content"], "final answer");
+        assert_eq!(serialized["reasoning_content"], "hidden thinking");
     }
 
     #[test]

@@ -406,6 +406,8 @@
     "chatMinimapStyle": "Стиль навигации",
     "chatMinimapFaq": "Индекс вопросов",
     "chatMinimapSticky": "Плавающий индикатор",
+    "additionalFeatures": "Дополнительные функции",
+    "showImageModelsInModelSelector": "Показывать модели изображений в выборе модели",
     "multiModelDisplayMode": "Режим отображения мультимодели",
     "multiModelDisplayModeDesc": "Настроить макет для мультимодельных ответов",
     "multiModelDisplayModeTabs": "Вкладки",
@@ -822,6 +824,7 @@
       "restartLater": "Restart Later"
     },
     "filterProviders": "Поиск провайдеров...",
+    "builtinProviderBadge": "Встроенный",
     "initProviders": "Инициализировать провайдеры",
     "initProvidersDesc": "Инициализировать системных провайдеров из встроенных пресетов. Для существующих провайдеров можно перезаписать настройки или добавить только недостающих.",
     "initOverwriteHint": "Режим перезаписи: конфигурации существующих провайдеров сбросятся до официальных (API-ключи сохранятся)",

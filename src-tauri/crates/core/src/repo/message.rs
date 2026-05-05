@@ -211,6 +211,29 @@ pub async fn update_message_content(
     message_from_entity(row)
 }
 
+pub async fn update_message_content_and_thinking(
+    db: &DatabaseConnection,
+    id: &str,
+    content: &str,
+    thinking: Option<&str>,
+) -> Result<Message> {
+    let row = messages::Entity::find_by_id(id)
+        .one(db)
+        .await?
+        .ok_or_else(|| AQBotError::NotFound(format!("Message {}", id)))?;
+
+    let mut am: messages::ActiveModel = row.into();
+    am.content = Set(content.to_string());
+    am.thinking = Set(thinking.map(|value| value.to_string()));
+    am.update(db).await?;
+
+    let row = messages::Entity::find_by_id(id)
+        .one(db)
+        .await?
+        .ok_or_else(|| AQBotError::NotFound(format!("Message {}", id)))?;
+    message_from_entity(row)
+}
+
 /// Update token usage stats on an existing message.
 pub async fn update_message_usage(
     db: &DatabaseConnection,

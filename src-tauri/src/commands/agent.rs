@@ -139,11 +139,58 @@ pub struct AgentDonePayload {
     #[serde(rename = "assistantMessageId")]
     pub assistant_message_id: String,
     pub text: String,
+    pub thinking: Option<String>,
+    pub model: Option<String>,
+    #[serde(rename = "sessionId")]
+    pub session_id: Option<String>,
     pub usage: Option<AgentUsagePayload>,
     #[serde(rename = "numTurns")]
     pub num_turns: Option<u32>,
     #[serde(rename = "costUsd")]
     pub cost_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct DeepSeekSessionContext {
+    pub deepseek_session_id: Option<String>,
+    pub deepseek_model: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DeepSeekExecJson {
+    pub model: Option<String>,
+    pub success: Option<bool>,
+    pub output: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DeepSeekSavedSession {
+    pub metadata: DeepSeekSavedSessionMetadata,
+    pub messages: Vec<DeepSeekSavedMessage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DeepSeekSavedSessionMetadata {
+    pub id: String,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DeepSeekSavedMessage {
+    pub role: String,
+    pub content: Vec<DeepSeekSavedContentBlock>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+enum DeepSeekSavedContentBlock {
+    #[serde(rename = "thinking")]
+    Thinking { thinking: String },
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(other)]
+    Other,
 }
 
 fn map_claude_code_permission_mode(mode: Option<&str>) -> &'static str {
@@ -177,7 +224,119 @@ fn resolve_claude_command_path() -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
-fn build_claude_command(resolved_path: &Path) -> Command {
+fn resolve_deepseek_tui_command_path() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(path_os) = env::var_os("PATH") {
+        for dir in env::split_paths(&path_os) {
+            candidates.push(dir.join("deepseek-tui.cmd"));
+            candidates.push(dir.join("deepseek-tui.exe"));
+            candidates.push(dir.join("deepseek-tui"));
+            candidates.push(dir.join("deepseek-tui.ps1"));
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(
+            home.join("AppData")
+                .join("Roaming")
+                .join("npm")
+                .join("deepseek-tui.cmd"),
+        );
+    }
+    candidates.push(PathBuf::from(r"C:\nvm4w\nodejs\deepseek-tui.cmd"));
+    candidates.push(PathBuf::from(r"C:\nvm4w\nodejs\deepseek-tui.ps1"));
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn deepseek_sessions_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".deepseek").join("sessions"))
+}
+
+fn load_deepseek_session_context(raw: Option<&str>) -> DeepSeekSessionContext {
+    raw.and_then(|value| serde_json::from_str::<DeepSeekSessionContext>(value).ok())
+        .unwrap_or_default()
+}
+
+fn serialize_deepseek_session_context(ctx: &DeepSeekSessionContext) -> Option<String> {
+    serde_json::to_string(ctx).ok()
+}
+
+fn build_agent_content_with_thinking(text: &str, thinking: Option<&str>) -> String {
+    match thinking.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(thinking_text) => format!(
+            "<think data-aqbot=\"1\">\n{}\n</think>\n\n{}",
+            thinking_text, text
+        ),
+        None => text.to_string(),
+    }
+}
+
+fn resolve_deepseek_session_file(session_id: &str) -> Option<PathBuf> {
+    let dir = deepseek_sessions_dir()?;
+    let path = dir.join(format!("{}.json", session_id));
+    path.is_file().then_some(path)
+}
+
+fn latest_deepseek_session_file() -> Option<PathBuf> {
+    let dir = deepseek_sessions_dir()?;
+    let mut latest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        match &latest {
+            Some((current_modified, _)) if &modified <= current_modified => {}
+            _ => latest = Some((modified, path)),
+        }
+    }
+    latest.map(|(_, path)| path)
+}
+
+fn load_deepseek_saved_session(path: &Path) -> Option<DeepSeekSavedSession> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<DeepSeekSavedSession>(&raw).ok()
+}
+
+fn extract_latest_deepseek_reply(
+    session: &DeepSeekSavedSession,
+) -> Option<(Option<String>, Option<String>)> {
+    let message = session
+        .messages
+        .iter()
+        .rev()
+        .find(|item| item.role == "assistant")?;
+    let mut thinking_parts: Vec<String> = Vec::new();
+    let mut text_parts: Vec<String> = Vec::new();
+    for block in &message.content {
+        match block {
+            DeepSeekSavedContentBlock::Thinking { thinking } => thinking_parts.push(thinking.clone()),
+            DeepSeekSavedContentBlock::Text { text } => text_parts.push(text.clone()),
+            DeepSeekSavedContentBlock::Other => {}
+        }
+    }
+    let thinking = if thinking_parts.is_empty() {
+        None
+    } else {
+        Some(thinking_parts.join("\n\n"))
+    };
+    let text = if text_parts.is_empty() {
+        None
+    } else {
+        Some(text_parts.join("\n\n"))
+    };
+    Some((thinking, text))
+}
+
+fn build_cli_command(resolved_path: &Path) -> Command {
     #[cfg(target_os = "windows")]
     {
         let ext = resolved_path
@@ -417,6 +576,7 @@ pub async fn agent_query_claude_code(
     prompt: String,
     cwd: Option<String>,
     permission_mode: Option<String>,
+    model: Option<String>,
 ) -> Result<(), String> {
     if prompt.trim().is_empty() {
         return Err("Prompt is empty".to_string());
@@ -518,7 +678,7 @@ pub async fn agent_query_claude_code(
 
         let final_text = {
             if let Some(resolved_claude_path) = resolve_claude_command_path() {
-                let mut command = build_claude_command(&resolved_claude_path);
+                let mut command = build_cli_command(&resolved_claude_path);
                 command
                     .arg("-p")
                     .arg(&prompt)
@@ -526,6 +686,11 @@ pub async fn agent_query_claude_code(
                     .arg("text")
                     .arg("--permission-mode")
                     .arg(&effective_permission_mode);
+                if let Some(ref selected_model) = model {
+                    if !selected_model.trim().is_empty() {
+                        command.arg("--model").arg(selected_model.trim());
+                    }
+                }
 
                 let cwd_error = if let Some(ref cwd) = effective_cwd {
                     let cwd_path = std::path::Path::new(cwd);
@@ -600,6 +765,9 @@ pub async fn agent_query_claude_code(
                 conversation_id: conv_id.clone(),
                 assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
                 text: final_text,
+                thinking: None,
+                model: model.clone(),
+                session_id: None,
                 usage: None,
                 num_turns: Some(1),
                 cost_usd: None,
@@ -607,6 +775,333 @@ pub async fn agent_query_claude_code(
         );
 
         let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn agent_query_deepseek_tui(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+    prompt: String,
+    cwd: Option<String>,
+    permission_mode: Option<String>,
+    model: Option<String>,
+) -> Result<(), String> {
+    if prompt.trim().is_empty() {
+        return Err("Prompt is empty".to_string());
+    }
+
+    let session =
+        agent_session::get_agent_session_by_conversation_id(&state.sea_db, &conversation_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("Agent session not found. Please switch to Agent mode first.")?;
+
+    {
+        let running = RUNNING_AGENTS.lock().unwrap();
+        if running.contains_key(&conversation_id) {
+            return Err("Agent is already running".to_string());
+        }
+    }
+
+    agent_session::update_agent_session_status(&state.sea_db, &session.id, "running")
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let user_message = message::create_message(
+        &state.sea_db,
+        &conversation_id,
+        MessageRole::User,
+        &prompt,
+        &[],
+        None,
+        0,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let pre_conv = conversation::get_conversation(&state.sea_db, &conversation_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let is_first_message = pre_conv.message_count <= 1;
+
+    conversation::increment_message_count(&state.sea_db, &conversation_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if is_first_message {
+        let fallback_title = if prompt.chars().count() > 30 {
+            format!("{}...", prompt.chars().take(30).collect::<String>())
+        } else {
+            prompt.clone()
+        };
+        if conversation::update_conversation_title(&state.sea_db, &conversation_id, &fallback_title)
+            .await
+            .is_ok()
+        {
+            let _ = app.emit(
+                "conversation-title-updated",
+                aqbot_core::types::ConversationTitleUpdatedEvent {
+                    conversation_id: conversation_id.clone(),
+                    title: fallback_title,
+                },
+            );
+        }
+    }
+
+    let effective_cwd = cwd.or(session.cwd.clone()).filter(|s| !s.trim().is_empty());
+    let auto_mode = matches!(
+        permission_mode.as_deref(),
+        Some("accept_edits" | "acceptEdits" | "full_access" | "bypassPermissions" | "auto")
+    );
+
+    let run_id = aqbot_core::utils::gen_id();
+    {
+        let mut running = RUNNING_AGENTS.lock().unwrap();
+        running.insert(conversation_id.clone(), run_id.clone());
+    }
+
+    let db = state.sea_db.clone();
+    let session_id = session.id.clone();
+    let conv_id = conversation_id.clone();
+    let user_msg_id = user_message.id.clone();
+    let assistant_created_at = user_message.created_at + 1;
+    let deepseek_ctx = load_deepseek_session_context(session.sdk_context_json.as_deref());
+    let saved_deepseek_session_id = deepseek_ctx.deepseek_session_id.clone();
+
+    tokio::spawn(async move {
+        let _running_guard = RunningAgentGuard {
+            conversation_id: conv_id.clone(),
+            run_id,
+        };
+
+        let mut current_assistant_msg_id: Option<String> = None;
+        let assistant_id_for_task: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
+        let _ = ensure_agent_assistant_message(
+            &db,
+            &app,
+            &conv_id,
+            &user_msg_id,
+            assistant_created_at,
+            "",
+            &mut current_assistant_msg_id,
+            &assistant_id_for_task,
+        )
+        .await;
+
+        let (final_text, final_thinking, final_model, resolved_session_id, session_context_json) = {
+            if let Some(resolved_deepseek_path) = resolve_deepseek_tui_command_path() {
+                let mut command = build_cli_command(&resolved_deepseek_path);
+                if let Some(ref existing_session_id) = saved_deepseek_session_id {
+                    if !existing_session_id.trim().is_empty() {
+                        command.arg("--resume").arg(existing_session_id.trim());
+                    }
+                }
+                command.arg("exec");
+                if auto_mode {
+                    command.arg("--auto");
+                }
+                if let Some(ref selected_model) = model {
+                    if !selected_model.trim().is_empty() {
+                        command.arg("--model").arg(selected_model.trim());
+                    }
+                }
+                command.arg("--json");
+                command.arg(&prompt);
+
+                let cwd_error = if let Some(ref cwd) = effective_cwd {
+                    let cwd_path = std::path::Path::new(cwd);
+                    if cwd_path.is_dir() {
+                        command.current_dir(cwd_path);
+                        None
+                    } else {
+                        Some(format!(
+                            "DeepSeek TUI failed: working directory does not exist or is not a directory.\n\n{}",
+                            cwd
+                        ))
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(cwd_error) = cwd_error {
+                    (cwd_error, None, None, saved_deepseek_session_id.clone(), None)
+                } else {
+                    match timeout(Duration::from_secs(600), command.output()).await {
+                        Ok(Ok(output)) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                            if output.status.success() {
+                                let parsed = serde_json::from_str::<DeepSeekExecJson>(&stdout).ok();
+                                let success = parsed.as_ref().and_then(|value| value.success).unwrap_or(true);
+                                let mut resolved_session_id = saved_deepseek_session_id.clone();
+                                if resolved_session_id.is_none() {
+                                    if let Some(path) = latest_deepseek_session_file() {
+                                        if let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) {
+                                            resolved_session_id = Some(name.to_string());
+                                        }
+                                    }
+                                }
+
+                                let mut final_thinking: Option<String> = None;
+                                let mut transcript_text: Option<String> = None;
+                                let mut transcript_model: Option<String> = None;
+                                if let Some(ref deepseek_session_id) = resolved_session_id {
+                                    if let Some(session_path) = resolve_deepseek_session_file(deepseek_session_id)
+                                    {
+                                        if let Some(saved_session) = load_deepseek_saved_session(&session_path) {
+                                            transcript_model = saved_session.metadata.model.clone();
+                                            if let Some((thinking, text)) =
+                                                extract_latest_deepseek_reply(&saved_session)
+                                            {
+                                                final_thinking = thinking;
+                                                transcript_text = text;
+                                            }
+                                            resolved_session_id = Some(saved_session.metadata.id.clone());
+                                        }
+                                    }
+                                }
+
+                                let final_model = transcript_model
+                                    .or_else(|| parsed.as_ref().and_then(|value| value.model.clone()))
+                                    .or_else(|| model.clone());
+                                let final_text = transcript_text
+                                    .or_else(|| parsed.as_ref().and_then(|value| value.output.clone()))
+                                    .filter(|value| !value.trim().is_empty())
+                                    .unwrap_or_else(|| {
+                                        if stdout.is_empty() {
+                                            "DeepSeek TUI completed without text output.".to_string()
+                                        } else {
+                                            stdout.clone()
+                                        }
+                                    });
+
+                                let ctx_json = resolved_session_id.as_ref().and_then(|deepseek_session_id| {
+                                    serialize_deepseek_session_context(&DeepSeekSessionContext {
+                                        deepseek_session_id: Some(deepseek_session_id.clone()),
+                                        deepseek_model: final_model.clone(),
+                                    })
+                                });
+
+                                if success {
+                                    (
+                                        final_text,
+                                        final_thinking,
+                                        final_model,
+                                        resolved_session_id,
+                                        ctx_json,
+                                    )
+                                } else {
+                                    (
+                                        final_text,
+                                        final_thinking,
+                                        final_model,
+                                        resolved_session_id,
+                                        ctx_json,
+                                    )
+                                }
+                            } else {
+                                let code = output
+                                    .status
+                                    .code()
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                (
+                                    format!(
+                                        "DeepSeek TUI failed with exit code {}.\n\n{}{}{}",
+                                        code,
+                                        if stdout.is_empty() { "" } else { &stdout },
+                                        if !stdout.is_empty() && !stderr.is_empty() {
+                                            "\n\n"
+                                        } else {
+                                            ""
+                                        },
+                                        if stderr.is_empty() { "" } else { &stderr }
+                                    ),
+                                    None,
+                                    model.clone(),
+                                    saved_deepseek_session_id.clone(),
+                                    None,
+                                )
+                            }
+                        }
+                        Ok(Err(err)) => (
+                            format!(
+                                "DeepSeek TUI failed: could not start the `deepseek-tui` command.\n\n{}",
+                                err
+                            ),
+                            None,
+                            model.clone(),
+                            saved_deepseek_session_id.clone(),
+                            None,
+                        ),
+                        Err(_) => (
+                            "DeepSeek TUI timed out after 10 minutes.".to_string(),
+                            None,
+                            model.clone(),
+                            saved_deepseek_session_id.clone(),
+                            None,
+                        ),
+                    }
+                }
+            } else {
+                let path_hint = env::var("PATH").unwrap_or_default();
+                (
+                    format!(
+                        "DeepSeek TUI failed: could not locate the `deepseek-tui` command.\n\nPATH: {}",
+                        path_hint
+                    ),
+                    None,
+                    model.clone(),
+                    saved_deepseek_session_id.clone(),
+                    None,
+                )
+            }
+        };
+
+        if let Some(ref mid) = current_assistant_msg_id {
+            let final_content =
+                build_agent_content_with_thinking(&final_text, final_thinking.as_deref());
+            let _ = message::update_message_content_and_thinking(
+                &db,
+                mid,
+                &final_content,
+                final_thinking.as_deref(),
+            )
+            .await;
+        }
+
+        let _ = app.emit(
+            "agent-done",
+            AgentDonePayload {
+                conversation_id: conv_id.clone(),
+                assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
+                text: final_text,
+                thinking: final_thinking,
+                model: final_model,
+                session_id: resolved_session_id,
+                usage: None,
+                num_turns: Some(1),
+                cost_usd: None,
+            },
+        );
+
+        if let Some(ctx_json) = session_context_json.as_deref() {
+            let _ = agent_session::update_agent_session_after_query(
+                &db,
+                &session_id,
+                "idle",
+                Some(ctx_json),
+                0,
+                0.0,
+            )
+            .await;
+        } else {
+            let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
+        }
     });
 
     Ok(())
@@ -1551,6 +2046,9 @@ pub async fn agent_query(
                 conversation_id: conv_id.clone(),
                 assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
                 text: final_content.clone(),
+                thinking: Some(accumulated_thinking.clone()).filter(|value| !value.trim().is_empty()),
+                model: Some(model_id.clone()),
+                session_id: None,
                 usage: usage_payload,
                 num_turns: Some(num_turns),
                 cost_usd: Some(cost_usd),

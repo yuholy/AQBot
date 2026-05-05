@@ -19,6 +19,8 @@ use aqbot_providers::{
     registry::ProviderRegistry, resolve_base_url_for_type, ProviderAdapter, ProviderRequestContext,
 };
 
+const EMBEDDING_BATCH_SIZE: usize = 4;
+
 // ── AsyncEmbedFn implementation ──────────────────────────────────────────────
 
 /// Concrete implementation of `AsyncEmbedFn` that uses provider adapters.
@@ -131,6 +133,13 @@ pub async fn generate_embeddings(
     texts: Vec<String>,
     dimensions: Option<usize>,
 ) -> Result<EmbedResponse> {
+    if texts.is_empty() {
+        return Ok(EmbedResponse {
+            embeddings: Vec::new(),
+            dimensions: dimensions.unwrap_or(0),
+        });
+    }
+
     let (provider_id, model_id) = parse_embedding_provider(embedding_provider)?;
     let (ctx, provider_config) = build_embed_context(db, master_key, &provider_id).await?;
 
@@ -140,13 +149,34 @@ pub async fn generate_embeddings(
         AQBotError::Provider(format!("Unsupported provider type: {}", registry_key))
     })?;
 
-    let request = EmbedRequest {
-        model: model_id,
-        input: texts,
-        dimensions,
-    };
+    let mut all_embeddings = Vec::new();
+    let mut resolved_dimensions = 0usize;
 
-    adapter.embed(&ctx, request).await
+    for batch in texts.chunks(EMBEDDING_BATCH_SIZE) {
+        let request = EmbedRequest {
+            model: model_id.clone(),
+            input: batch.to_vec(),
+            dimensions,
+        };
+
+        let response = adapter.embed(&ctx, request).await?;
+
+        if resolved_dimensions == 0 {
+            resolved_dimensions = response.dimensions;
+        } else if response.dimensions != 0 && response.dimensions != resolved_dimensions {
+            return Err(AQBotError::Provider(format!(
+                "Embedding dimension mismatch across batches: got {} and {}",
+                resolved_dimensions, response.dimensions
+            )));
+        }
+
+        all_embeddings.extend(response.embeddings);
+    }
+
+    Ok(EmbedResponse {
+        embeddings: all_embeddings,
+        dimensions: resolved_dimensions.max(dimensions.unwrap_or(0)),
+    })
 }
 
 /// Rerank existing vector search results using a configured rerank provider.

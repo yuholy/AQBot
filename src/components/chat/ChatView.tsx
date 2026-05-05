@@ -3740,7 +3740,14 @@ export function ChatView() {
 
   // ── Render ─────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div
+      className="aqbot-chat-view-shell flex flex-col h-full min-h-0"
+      style={{
+        padding: 0,
+        gap: 0,
+        backgroundColor: 'transparent',
+      }}
+    >
       {/* Bubble style overrides */}
       <style>{`
         @keyframes aqbot-think-spin {
@@ -3840,196 +3847,211 @@ export function ChatView() {
         .aqbot-streaming-dots span:nth-child(3) {
           animation-delay: 0.3s;
         }
+        .aqbot-chat-view-header {
+          background: ${token.colorBgContainer};
+          border-bottom: 1px solid ${token.colorBorderSecondary};
+          overflow: hidden;
+          flex-shrink: 0;
+        }
+        .aqbot-chat-view-surface {
+          background: ${token.colorBgContainer};
+          overflow: hidden;
+          min-height: 0;
+        }
       `}</style>
 
       {/* Top Bar */}
-      <div className="flex items-center gap-2 px-3 py-3">
-        {activeConversation ? (
-          <>
-            {renderConvIconForChat(24)}
-            {editingTitle ? (
-              <div className="flex items-center gap-1">
-                <Input
-                  ref={titleInputRef}
-                  value={titleDraft}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  onBlur={handleTitleSave}
-                  onPressEnter={handleTitleSave}
-                  size="small"
-                  style={{ maxWidth: 240 }}
-                />
-                <Tooltip title={t('chat.aiGenerateTitle')}>
-                  <Button
-                    type="text"
+      <div className="aqbot-chat-view-header">
+        <div className="flex items-center gap-2 px-5 py-3">
+          {activeConversation ? (
+            <>
+              {renderConvIconForChat(24)}
+              {editingTitle ? (
+                <div className="flex items-center gap-1">
+                  <Input
+                    ref={titleInputRef}
+                    value={titleDraft}
+                    onChange={(e) => setTitleDraft(e.target.value)}
+                    onBlur={handleTitleSave}
+                    onPressEnter={handleTitleSave}
                     size="small"
-                    icon={isTitleGenerating ? <SyncOutlined spin /> : <Sparkles size={14} />}
-                    disabled={isTitleGenerating}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={(e) => { e.stopPropagation(); handleRegenerateTitle(); }}
+                    style={{ maxWidth: 240 }}
                   />
-                </Tooltip>
-              </div>
-            ) : (
-              <Typography.Text
-                className="cursor-pointer select-none"
-                onClick={handleTitleClick}
+                  <Tooltip title={t('chat.aiGenerateTitle')}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={isTitleGenerating ? <SyncOutlined spin /> : <Sparkles size={14} />}
+                      disabled={isTitleGenerating}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={(e) => { e.stopPropagation(); handleRegenerateTitle(); }}
+                    />
+                  </Tooltip>
+                </div>
+              ) : (
+                <Typography.Text
+                  className="cursor-pointer select-none"
+                  style={{ fontSize: 18, fontWeight: 600, lineHeight: 1.25 }}
+                  onClick={handleTitleClick}
+                >
+                  {activeConversation.title}
+                  {isTitleGenerating
+                    ? <SyncOutlined spin className="ml-1 text-xs opacity-50" />
+                    : <Pencil size={12} className="ml-1 text-xs opacity-50" />
+                  }
+                </Typography.Text>
+              )}
+
+              <div className="flex-1" />
+
+              {showHeaderModelSelector && <ModelSelector />}
+              <Popover
+                content={<StatsPopoverContent stats={stats} t={t} token={token} />}
+                trigger="click"
+                open={statsOpen}
+                onOpenChange={handleStatsOpenChange}
+                placement="bottomRight"
               >
-                {activeConversation.title}
-                {isTitleGenerating
-                  ? <SyncOutlined spin className="ml-1 text-xs opacity-50" />
-                  : <Pencil size={12} className="ml-1 text-xs opacity-50" />
-                }
-              </Typography.Text>
-            )}
-
-            <div className="flex-1" />
-
-            {showHeaderModelSelector && <ModelSelector />}
-            <Popover
-              content={<StatsPopoverContent stats={stats} t={t} token={token} />}
-              trigger="click"
-              open={statsOpen}
-              onOpenChange={handleStatsOpenChange}
-              placement="bottomRight"
-            >
-              <Tooltip title={t('chat.stats.title')}>
-                <Button type="text" icon={<ChartNoAxesColumn size={14} />} size="small" />
-              </Tooltip>
-            </Popover>
-            <Dropdown menu={{ items: exportMenuItems }} trigger={['click']}>
-              <Button type="text" icon={<Share2 size={14} />} size="small" />
-            </Dropdown>
-          </>
-        ) : (
-          <>
-            <Typography.Text type="secondary">{t('chat.welcome')}</Typography.Text>
-            <div className="flex-1" />
-            {showHeaderModelSelector && <ModelSelector />}
-          </>
-        )}
-      </div>
-
-      {activeConversation?.mode === 'agent' && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '0 12px 10px',
-            flexWrap: 'wrap',
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          }}
-        >
-          <Tag icon={activeAgentExecutor.id === 'deepseek-tui' ? <Brain size={12} /> : activeAgentExecutor.id === 'claude-code' ? <Code size={12} /> : <Bot size={12} />} color="blue" style={{ margin: 0 }}>
-            {activeAgentExecutor.name}
-          </Tag>
-          {activeAgentExecutorModel && (
-            <Tag style={{ margin: 0 }}>
-              {activeAgentExecutorModel}
-            </Tag>
-          )}
-          <Tooltip title={currentAgentSession?.cwd || 'No workspace selected'}>
-            <Tag style={{ margin: 0, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {abbreviateAgentPath(currentAgentSession?.cwd)}
-            </Tag>
-          </Tooltip>
-          <Tag style={{ margin: 0 }}>
-            {agentPermissionLabel}
-          </Tag>
-          <Tag color={isAgentRunning ? 'processing' : 'default'} style={{ margin: 0 }}>
-            {agentRuntimeStatusLabel}
-          </Tag>
-        </div>
-      )}
-
-      {/* Message Area */}
-      <div ref={messageAreaRef} data-message-area className={`flex-1 min-h-0 overflow-hidden relative bubble-${bubbleStyle || 'modern'}`}>
-        {messages.length === 0 ? (
-          activeConversationId && loading ? (
-            <div
-              className="flex flex-col items-center justify-center h-full"
-              style={{ gap: 12, padding: '0 24px', color: token.colorTextSecondary }}
-            >
-              <SyncOutlined spin style={{ fontSize: 20, color: token.colorPrimary }} />
-              <Typography.Text type="secondary">
-                {t('chat.loadingConversation')}
-              </Typography.Text>
-            </div>
+                <Tooltip title={t('chat.stats.title')}>
+                  <Button type="text" icon={<ChartNoAxesColumn size={14} />} size="small" />
+                </Tooltip>
+              </Popover>
+              <Dropdown menu={{ items: exportMenuItems }} trigger={['click']}>
+                <Button type="text" icon={<Share2 size={14} />} size="small" />
+              </Dropdown>
+            </>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full" style={{ padding: '0 24px' }}>
-              <Typography.Title level={3} style={{ marginBottom: 24, fontWeight: 500 }}>
-                {greetingText}
-              </Typography.Title>
-              <Prompts
-                items={promptItems}
-                onItemClick={handlePromptClick}
-                wrap
-                style={{ marginTop: 16 }}
-              />
-            </div>
-          )
-        ) : (
-          <>
-            <Bubble.List
-              key={bubbleListThemeKey}
-              ref={bubbleListRef}
-              items={finalBubbleItems}
-              autoScroll={false}
-              onScroll={handleBubbleListScroll}
-              role={roles}
-              style={{
-                height: '100%',
-                padding: settings.chat_minimap_enabled && settings.chat_minimap_style === 'sticky'
-                  ? '50px 24px 16px 24px'
-                  : '16px 24px',
-                overflowX: 'hidden',
-              }}
-            />
-            <ChatScrollIndicator onUserScrollIntent={markUserScrollIntent} />
-            <MinimapScrollProvider scrollTo={minimapScrollTo} scrollBoxRef={scrollBoxRef}>
-              <ChatMinimap />
-            </MinimapScrollProvider>
-          </>
-        )}
-      </div>
-
-      {/* Agent status bar */}
-      {currentAgentStatus && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '6px 24px',
-            fontSize: 13,
-            color: token.colorTextSecondary,
-          }}
-        >
-          <Spin size="small" /> {currentAgentStatus}
+            <>
+              <Typography.Text type="secondary">{t('chat.welcome')}</Typography.Text>
+              <div className="flex-1" />
+              {showHeaderModelSelector && <ModelSelector />}
+            </>
+          )}
         </div>
-      )}
 
-      {/* Input Area */}
-      <div className="relative">
-        {showScrollToBottom && (
-          <Button
-            size="small"
-            shape="round"
-            icon={<ChevronDown size={14} />}
-            onClick={handleScrollToBottom}
+        {activeConversation?.mode === 'agent' && (
+          <div
             style={{
-              position: 'absolute',
-              left: '50%',
-              top: -28,
-              zIndex: 2,
-              transform: 'translateX(-50%)',
-              boxShadow: token.boxShadowSecondary,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '0 18px 14px',
+              flexWrap: 'wrap',
             }}
           >
-            {t('chat.scrollToBottom')}
-          </Button>
+            <Tag icon={activeAgentExecutor.id === 'deepseek-tui' ? <Brain size={12} /> : activeAgentExecutor.id === 'claude-code' ? <Code size={12} /> : <Bot size={12} />} color="blue" style={{ margin: 0 }}>
+              {activeAgentExecutor.name}
+            </Tag>
+            {activeAgentExecutorModel && (
+              <Tag style={{ margin: 0 }}>
+                {activeAgentExecutorModel}
+              </Tag>
+            )}
+            <Tooltip title={currentAgentSession?.cwd || 'No workspace selected'}>
+              <Tag style={{ margin: 0, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {abbreviateAgentPath(currentAgentSession?.cwd)}
+              </Tag>
+            </Tooltip>
+            <Tag style={{ margin: 0 }}>
+              {agentPermissionLabel}
+            </Tag>
+            <Tag color={isAgentRunning ? 'processing' : 'default'} style={{ margin: 0 }}>
+              {agentRuntimeStatusLabel}
+            </Tag>
+          </div>
         )}
-        <InputArea />
+      </div>
+
+      <div className="aqbot-chat-view-surface flex flex-1 min-h-0 flex-col">
+        {/* Message Area */}
+        <div ref={messageAreaRef} data-message-area className={`flex-1 min-h-0 overflow-hidden relative bubble-${bubbleStyle || 'modern'}`}>
+          {messages.length === 0 ? (
+            activeConversationId && loading ? (
+              <div
+                className="flex flex-col items-center justify-center h-full"
+                style={{ gap: 12, padding: '0 28px', color: token.colorTextSecondary }}
+              >
+                <SyncOutlined spin style={{ fontSize: 20, color: token.colorPrimary }} />
+                <Typography.Text type="secondary">
+                  {t('chat.loadingConversation')}
+                </Typography.Text>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full" style={{ padding: '0 28px' }}>
+                <Typography.Title level={3} style={{ marginBottom: 24, fontWeight: 500 }}>
+                  {greetingText}
+                </Typography.Title>
+                <Prompts
+                  items={promptItems}
+                  onItemClick={handlePromptClick}
+                  wrap
+                  style={{ marginTop: 16 }}
+                />
+              </div>
+            )
+          ) : (
+            <>
+              <Bubble.List
+                key={bubbleListThemeKey}
+                ref={bubbleListRef}
+                items={finalBubbleItems}
+                autoScroll={false}
+                onScroll={handleBubbleListScroll}
+                role={roles}
+                style={{
+                  height: '100%',
+                  padding: settings.chat_minimap_enabled && settings.chat_minimap_style === 'sticky'
+                    ? '54px 28px 18px 28px'
+                    : '22px 28px 18px 28px',
+                  overflowX: 'hidden',
+                }}
+              />
+              <ChatScrollIndicator onUserScrollIntent={markUserScrollIntent} />
+              <MinimapScrollProvider scrollTo={minimapScrollTo} scrollBoxRef={scrollBoxRef}>
+                <ChatMinimap />
+              </MinimapScrollProvider>
+            </>
+          )}
+        </div>
+
+        {/* Agent status bar */}
+        {currentAgentStatus && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '2px 28px 8px',
+              fontSize: 13,
+              color: token.colorTextSecondary,
+            }}
+          >
+            <Spin size="small" /> {currentAgentStatus}
+          </div>
+        )}
+
+        {/* Input Area */}
+        <div className="relative">
+          {showScrollToBottom && (
+            <Button
+              size="small"
+              shape="round"
+              icon={<ChevronDown size={14} />}
+              onClick={handleScrollToBottom}
+              style={{
+                position: 'absolute',
+                left: '50%',
+                top: -28,
+                zIndex: 2,
+                transform: 'translateX(-50%)',
+                boxShadow: token.boxShadowSecondary,
+              }}
+            >
+              {t('chat.scrollToBottom')}
+            </Button>
+          )}
+          <InputArea />
+        </div>
       </div>
       <Modal
         title={t('chat.compressionSummary')}

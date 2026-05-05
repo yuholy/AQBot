@@ -77,6 +77,7 @@ let _pendingUiChunk: PendingUiChunk | null = null;
 let _streamUiFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let _activeMessageLoadSeq = 0;
 const _conversationPreferenceSaveSeq = new Map<string, number>();
+const _pendingConversationUpdates = new Map<string, Promise<void>>();
 const MESSAGE_PAGE_SIZE = 10;
 const FAST_SWITCH_MESSAGE_CACHE_LIMIT = 20;
 interface CachedConversationPage {
@@ -200,6 +201,13 @@ function nextConversationPreferenceSaveSeq(conversationId: string): number {
 
 function isLatestConversationPreferenceSave(conversationId: string, seq: number): boolean {
   return (_conversationPreferenceSaveSeq.get(conversationId) ?? 0) === seq;
+}
+
+async function waitForPendingConversationUpdate(conversationId: string): Promise<void> {
+  const pendingUpdate = _pendingConversationUpdates.get(conversationId);
+  if (pendingUpdate) {
+    await pendingUpdate;
+  }
 }
 
 function getEffectiveThinkingBudget(get: () => ConversationState, conversationId: string): number | undefined {
@@ -1466,16 +1474,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   updateConversation: async (id, input) => {
-    try {
+    const updateTask = (async () => {
       const updated = await invoke<Conversation>('update_conversation', { id, input });
       set((s) => ({
         ...mergeConversationCollections(s.conversations, s.archivedConversations, updated),
         ...(s.activeConversationId === id ? conversationPreferenceStateFromConversation(updated) : {}),
         error: null,
       }));
+    })();
+    _pendingConversationUpdates.set(id, updateTask);
+
+    try {
+      await updateTask;
     } catch (e) {
       set({ error: String(e) });
       throw e;
+    } finally {
+      if (_pendingConversationUpdates.get(id) === updateTask) {
+        _pendingConversationUpdates.delete(id);
+      }
     }
   },
 
@@ -1618,6 +1635,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   sendMessage: async (content, attachments = [], searchProviderId = null) => {
     const conversationId = get().activeConversationId;
     if (!conversationId) throw new Error('No active conversation');
+    await waitForPendingConversationUpdate(conversationId);
     const activeConversation = get().conversations.find((conversation) => conversation.id === conversationId);
 
     // Optimistically add user message BEFORE backend call
@@ -1798,6 +1816,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   sendAgentMessage: async (content, attachments = [], options) => {
     const conversationId = get().activeConversationId;
     if (!conversationId) throw new Error('No active conversation');
+    await waitForPendingConversationUpdate(conversationId);
 
     _activeAgentCancel?.();
     _activeAgentCancel = null;

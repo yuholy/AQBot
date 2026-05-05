@@ -124,17 +124,17 @@ function SortableCategoryLabel({
     >
       <div
         ref={mergedRef}
-        className="flex items-center gap-1"
-        style={{ opacity: isDragging ? 0.3 : 1, cursor: 'pointer', userSelect: 'none', flex: 1 }}
+        className="aqbot-chat-category-label flex items-center gap-1.5"
+        style={{ opacity: isDragging ? 0.3 : 1, cursor: 'pointer', userSelect: 'none', flex: 1, minWidth: 0 }}
         {...attributes}
         {...listeners}
       >
-        <GripVertical size={12} style={{ opacity: 0.4, cursor: 'grab', flexShrink: 0 }} />
+        <GripVertical size={11} style={{ opacity: 0.28, cursor: 'grab', flexShrink: 0 }} />
         <CategoryIcon cat={cat} size={14} />
         <span className="truncate">{cat.name}</span>
         {cat.system_prompt && (
           <Tooltip title="System Prompt">
-            <MessageSquareText size={12} style={{ opacity: 0.45, flexShrink: 0 }} />
+            <MessageSquareText size={11} style={{ opacity: 0.36, flexShrink: 0 }} />
           </Tooltip>
         )}
       </div>
@@ -153,7 +153,11 @@ interface ChatSidebarToolbarProps {
   isAllSelected: boolean
   searchVisible: boolean
   primaryColor: string
+  primaryBgColor: string
+  primaryBorderColor: string
   secondaryTextColor: string
+  borderColor: string
+  fillTertiaryColor: string
   newConversationTitle: string
   onCancelArchivedSelect: () => void
   onToggleArchivedSelectAll: () => void
@@ -184,7 +188,11 @@ function ChatSidebarToolbar({
   isAllSelected,
   searchVisible,
   primaryColor,
+  primaryBgColor,
+  primaryBorderColor,
   secondaryTextColor,
+  borderColor,
+  fillTertiaryColor,
   newConversationTitle,
   onCancelArchivedSelect,
   onToggleArchivedSelectAll,
@@ -204,21 +212,41 @@ function ChatSidebarToolbar({
   onEnterMultiSelect,
 }: ChatSidebarToolbarProps) {
   const { t } = useTranslation()
+  const toolbarButtonStyle = {
+    width: 28,
+    height: 28,
+    padding: 0,
+    borderRadius: 8,
+    color: secondaryTextColor,
+    backgroundColor: 'transparent',
+    border: 'none',
+  }
+  const activeToolbarButtonStyle = {
+    ...toolbarButtonStyle,
+    color: primaryColor,
+    backgroundColor: primaryBgColor,
+    border: `1px solid ${primaryBorderColor}`,
+  }
+  const neutralToolbarButtonStyle = {
+    width: 28,
+    height: 28,
+    padding: 0,
+    borderRadius: 8,
+  }
 
   return (
     <div
       className="flex items-center justify-between"
       style={{
-        padding: '8px 12px',
-        borderBottom: '1px solid var(--border-color)',
+        padding: '8px 10px 6px',
       }}
     >
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1.5">
         {showArchived ? (
           archivedMultiSelect ? (
             <>
               <Tooltip title={t('common.cancel')}>
-                <Button type="text" icon={<X size={16} />} size="small" onClick={onCancelArchivedSelect} />
+                <Button type="text" icon={<X size={16} />} size="small" style={toolbarButtonStyle} onClick={onCancelArchivedSelect} />
               </Tooltip>
               <Tooltip title={t('chat.selectAll')}>
                 <Checkbox
@@ -232,14 +260,14 @@ function ChatSidebarToolbar({
             </>
           ) : (
             <>
-              <Button type="text" icon={<ArrowLeft size={16} />} size="small" onClick={onBackFromArchived} />
+              <Button type="text" icon={<ArrowLeft size={16} />} size="small" style={toolbarButtonStyle} onClick={onBackFromArchived} />
               <span style={{ fontSize: 13, fontWeight: 500 }}>{t('chat.archived')} ({archivedConversationCount})</span>
             </>
           )
         ) : multiSelectMode ? (
           <>
             <Tooltip title={t('common.cancel')}>
-              <Button type="text" icon={<X size={16} />} size="small" onClick={onCancelMultiSelect} />
+              <Button type="text" icon={<X size={16} />} size="small" style={toolbarButtonStyle} onClick={onCancelMultiSelect} />
             </Tooltip>
             <Tooltip title={t('chat.selectAll')}>
               <Checkbox
@@ -259,7 +287,7 @@ function ChatSidebarToolbar({
                 icon={<Search size={16} />}
                 size="small"
                 onClick={onToggleSearch}
-                style={{ color: searchVisible ? primaryColor : undefined }}
+                style={searchVisible ? activeToolbarButtonStyle : toolbarButtonStyle}
               />
             </Tooltip>
             <Tooltip title={t('chat.archived')}>
@@ -267,6 +295,7 @@ function ChatSidebarToolbar({
                 type="text"
                 icon={<Archive size={16} />}
                 size="small"
+                style={toolbarButtonStyle}
                 onClick={onShowArchived}
               />
             </Tooltip>
@@ -275,6 +304,7 @@ function ChatSidebarToolbar({
                 type="text"
                 icon={<FolderPlus size={16} />}
                 size="small"
+                style={toolbarButtonStyle}
                 onClick={onCreateCategory}
               />
             </Tooltip>
@@ -283,6 +313,7 @@ function ChatSidebarToolbar({
                 type="text"
                 icon={<MessageSquarePlus size={16} />}
                 size="small"
+                style={toolbarButtonStyle}
                 onClick={onCreateConversation}
               />
             </Tooltip>
@@ -291,6 +322,7 @@ function ChatSidebarToolbar({
                 type="text"
                 icon={<PanelLeftClose size={16} />}
                 size="small"
+                style={toolbarButtonStyle}
                 onClick={onCollapseSidebar}
                 aria-label={t('common.collapse')}
               />
@@ -301,12 +333,12 @@ function ChatSidebarToolbar({
       <div>
         {showArchived ? (
           archivedMultiSelect ? (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               <Tooltip title={t('chat.unarchive')}>
-                <Button type="text" icon={<Undo2 size={16} />} size="small" disabled={archivedSelectedCount === 0} onClick={onBatchUnarchive} />
+                <Button type="text" icon={<Undo2 size={16} />} size="small" style={toolbarButtonStyle} disabled={archivedSelectedCount === 0} onClick={onBatchUnarchive} />
               </Tooltip>
               <Tooltip title={t('chat.delete')}>
-                <Button type="text" danger icon={<Trash2 size={16} />} size="small" disabled={archivedSelectedCount === 0} onClick={onBatchDeleteArchived} />
+                <Button type="text" danger icon={<Trash2 size={16} />} size="small" style={neutralToolbarButtonStyle} disabled={archivedSelectedCount === 0} onClick={onBatchDeleteArchived} />
               </Tooltip>
             </div>
           ) : (
@@ -315,17 +347,18 @@ function ChatSidebarToolbar({
                 type="text"
                 icon={<ListTodo size={16} />}
                 size="small"
+                style={toolbarButtonStyle}
                 onClick={onEnterArchivedMultiSelect}
               />
             </Tooltip>
           )
         ) : multiSelectMode ? (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <Tooltip title={t('chat.archive')}>
-              <Button type="text" icon={<Archive size={16} />} size="small" disabled={selectedCount === 0} onClick={onBatchArchive} />
+              <Button type="text" icon={<Archive size={16} />} size="small" style={toolbarButtonStyle} disabled={selectedCount === 0} onClick={onBatchArchive} />
             </Tooltip>
             <Tooltip title={t('chat.delete')}>
-              <Button type="text" danger icon={<Trash2 size={16} />} size="small" disabled={selectedCount === 0} onClick={onBatchDelete} />
+              <Button type="text" danger icon={<Trash2 size={16} />} size="small" style={neutralToolbarButtonStyle} disabled={selectedCount === 0} onClick={onBatchDelete} />
             </Tooltip>
           </div>
         ) : (
@@ -334,6 +367,7 @@ function ChatSidebarToolbar({
               type="text"
               icon={<ListTodo size={16} />}
               size="small"
+              style={toolbarButtonStyle}
               onClick={onEnterMultiSelect}
             />
           </Tooltip>
@@ -875,8 +909,9 @@ export function ChatSidebar() {
               </span>
             ),
             group,
+            className: isChild ? 'aqbot-chat-conversation-item aqbot-chat-conversation-item-child' : 'aqbot-chat-conversation-item',
             'data-conv-id': conv.id,
-            ...(isChild ? { style: { paddingLeft: 20 } } : {}),
+            ...(isChild ? { style: { paddingLeft: 28 } } : {}),
           }
         }
         return {
@@ -884,8 +919,9 @@ export function ChatSidebar() {
           label,
           icon,
           group,
+          className: isChild ? 'aqbot-chat-conversation-item aqbot-chat-conversation-item-child' : 'aqbot-chat-conversation-item',
           'data-conv-id': conv.id,
-          ...(isChild ? { style: { paddingLeft: 20 } } : {}),
+          ...(isChild ? { style: { paddingLeft: 28 } } : {}),
         }
       }
 
@@ -914,6 +950,7 @@ export function ChatSidebar() {
             icon: null,
             group: `cat:${cat.id}`,
             disabled: true,
+            className: 'aqbot-chat-empty-category',
             style: { pointerEvents: 'none', minHeight: 28, opacity: 0.6 },
           })
         }
@@ -1042,7 +1079,7 @@ export function ChatSidebar() {
           />
         )
       }
-      return groupLabels[group] ?? group
+      return <span className="aqbot-chat-time-group-label">{groupLabels[group] ?? group}</span>
     },
     [categories, groupLabels, t, handleDeleteCategory, handleNewConversation],
   )
@@ -1354,7 +1391,132 @@ export function ChatSidebar() {
   }, [rightClickedConvId, conversations, t, togglePin, toggleArchive, handleRename, handleDelete, buildExportChildren, categories, moveToCategoryMenuItems, updateConversation])
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="aqbot-chat-sidebar flex flex-col h-full">
+      <style>{`
+        .aqbot-chat-sidebar {
+          --aqbot-sidebar-border: ${token.colorBorderSecondary};
+          --aqbot-sidebar-hover-bg: ${token.colorFillSecondary};
+          --aqbot-sidebar-soft-bg: ${token.colorFillTertiary};
+          --aqbot-sidebar-primary-bg: ${token.colorPrimaryBg};
+          --aqbot-sidebar-primary-border: ${token.colorPrimaryBorder};
+          --aqbot-sidebar-primary-text: ${token.colorPrimary};
+          --aqbot-sidebar-text-heading: ${token.colorTextHeading};
+          --aqbot-sidebar-text-tertiary: ${token.colorTextTertiary};
+          background: ${token.colorFillQuaternary};
+        }
+        .aqbot-chat-sidebar .chat-sidebar-search {
+          padding: 4px 10px 8px;
+        }
+        .aqbot-chat-sidebar .chat-sidebar-search .ant-input-affix-wrapper {
+          border-radius: 9px;
+          padding-inline: 10px;
+          background: var(--aqbot-sidebar-soft-bg);
+          border: 0;
+          box-shadow: none;
+        }
+        .aqbot-chat-sidebar .chat-sidebar-search .ant-input-affix-wrapper:hover,
+        .aqbot-chat-sidebar .chat-sidebar-search .ant-input-affix-wrapper-focused {
+          background: var(--aqbot-sidebar-hover-bg);
+          border-color: var(--aqbot-sidebar-primary-border);
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations {
+          scrollbar-gutter: stable;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-title {
+          margin-bottom: 2px;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-title:not(.ant-conversations-group-title-collapsible) {
+          min-height: 24px;
+          height: 24px;
+          padding-inline: 9px;
+          color: var(--aqbot-sidebar-text-tertiary);
+        }
+        .aqbot-chat-time-group-label {
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-title-collapsible {
+          min-height: 30px;
+          height: 30px;
+          padding-inline: 9px;
+          margin-bottom: 3px;
+          background: transparent;
+          border: 0;
+          border-radius: 8px;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-title-collapsible:hover {
+          background: var(--aqbot-sidebar-hover-bg);
+        }
+        .aqbot-chat-category-label {
+          color: var(--aqbot-sidebar-text-heading);
+          font-size: 13px;
+          font-weight: 560;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-collapse-trigger {
+          color: var(--aqbot-sidebar-text-tertiary);
+          font-size: 12px;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item {
+          color: ${token.colorTextSecondary};
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item:hover {
+          background: var(--aqbot-sidebar-soft-bg);
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item-active {
+          background: var(--aqbot-sidebar-hover-bg) !important;
+          box-shadow: none;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item-active .ant-conversations-label {
+          color: var(--aqbot-sidebar-text-heading) !important;
+          font-weight: 600;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-label {
+          font-size: 13px;
+          line-height: 1.3;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 24px;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .aqbot-chat-conversation-item-child {
+          opacity: 0.92;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .aqbot-chat-empty-category {
+          margin-top: -2px;
+          margin-bottom: 6px;
+        }
+        .aqbot-chat-conversation-menu-delete {
+          width: 24px;
+          height: 24px;
+          min-width: 24px;
+          padding: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item-active .aqbot-chat-conversation-menu-delete {
+          opacity: 0;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item:hover .aqbot-chat-conversation-menu-delete,
+        .aqbot-chat-conversation-menu-delete:focus-visible {
+          opacity: 0.85;
+        }
+        .aqbot-chat-conversation-menu-delete:hover {
+          opacity: 1 !important;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-label {
+          flex: 1;
+          overflow: hidden;
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
       <ChatSidebarToolbar
         showArchived={showArchived}
         archivedMultiSelect={archivedMultiSelect}
@@ -1366,7 +1528,11 @@ export function ChatSidebar() {
         isAllSelected={isAllSelected}
         searchVisible={searchVisible}
         primaryColor={token.colorPrimary}
+        primaryBgColor={token.colorPrimaryBg}
+        primaryBorderColor={token.colorPrimaryBorder}
         secondaryTextColor={token.colorTextSecondary}
+        borderColor={token.colorBorderSecondary}
+        fillTertiaryColor={token.colorFillTertiary}
         newConversationTitle={shortcutHint(t('chat.newConversation'), 'newConversation')}
         onCancelArchivedSelect={() => { setArchivedMultiSelect(false); setArchivedSelectedIds(new Set()) }}
         onToggleArchivedSelectAll={() => { void handleSelectAllArchived() }}
@@ -1388,7 +1554,7 @@ export function ChatSidebar() {
 
       {/* Collapsible search */}
       {!showArchived && searchVisible && !multiSelectMode && (
-        <div className="chat-sidebar-search" style={{ padding: '4px 12px 8px' }}>
+        <div className="chat-sidebar-search">
           <Input
             prefix={<Search size={14} />}
             placeholder={t('chat.searchPlaceholder')}
@@ -1478,41 +1644,6 @@ export function ChatSidebar() {
               if (!convId) { e.preventDefault(); e.stopPropagation(); return }
               setRightClickedConvId(convId)
             }}>
-              <style>{`
-                .ant-conversations .ant-conversations-item-active {
-                  background-color: ${token.colorPrimaryBg} !important;
-                }
-                .ant-conversations .ant-conversations-item-active .ant-conversations-label {
-                  color: ${token.colorPrimary} !important;
-                }
-                .aqbot-chat-conversation-menu-delete {
-                  width: 22px;
-                  height: 22px;
-                  min-width: 22px;
-                  padding: 0;
-                  display: inline-flex;
-                  align-items: center;
-                  justify-content: center;
-                }
-                .ant-conversations .ant-conversations-item-active .aqbot-chat-conversation-menu-delete {
-                  opacity: 0;
-                }
-                .ant-conversations .ant-conversations-item:hover .aqbot-chat-conversation-menu-delete,
-                .aqbot-chat-conversation-menu-delete:focus-visible {
-                  opacity: 0.85;
-                }
-                .aqbot-chat-conversation-menu-delete:hover {
-                  opacity: 1 !important;
-                }
-                .ant-conversations .ant-conversations-group-label {
-                  flex: 1;
-                  overflow: hidden;
-                }
-                @keyframes spin {
-                  from { transform: rotate(0deg); }
-                  to { transform: rotate(360deg); }
-                }
-              `}</style>
               {conversationItems.length > 0 ? (
                 <DndContext
                   sensors={dndSensors}
@@ -1523,9 +1654,15 @@ export function ChatSidebar() {
                   onDragCancel={handleCategoryDragCancel}
                 >
                   <Conversations
+                    className="aqbot-chat-conversations"
                     items={conversationItems}
                     activeKey={multiSelectMode ? undefined : (activeConversationId ?? undefined)}
                     onActiveChange={handleConversationClick}
+                    styles={{
+                      root: { padding: '6px 8px 16px', gap: 6 },
+                      group: { gap: 2 },
+                      item: { minHeight: 34, height: 34, padding: '0 9px 0 8px', borderRadius: 8 },
+                    }}
                     groupable={{
                       label: (group: string) => renderGroupLabel(group),
                       collapsible: (group: string) => group.startsWith('cat:'),

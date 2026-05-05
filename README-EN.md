@@ -6,6 +6,28 @@
     <a href="https://www.producthunt.com/products/aqbot?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-aqbot" target="_blank" rel="noopener noreferrer"><img alt="AQBot - Lightweight, high-perf cross-platform AI desktop client | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1118403&amp;theme=light&amp;t=1775627359538"></a>
 </p>
 
+## What AQBot Is
+
+AQBot is a **local-first AI coding workspace** that brings coding, conversations, knowledge bases, skills, MCP, and file workflows into one desktop app.
+
+It can act like a coding agent for reading and writing code, running commands, and analyzing projects, while also turning chats, documents, tool configuration, and execution context into a reusable personal knowledge system.
+
+Instead of splitting chat, retrieval, tool use, and API routing across separate apps, AQBot is built around one continuous workflow: **ask, code, retrieve, execute, capture, and reuse** in the same context.
+
+## What It Is For
+
+- Using AQBot as an everyday AI workspace for software development, not just a chat window
+- Preserving full conversation history, project context, and decision trails for later reuse
+- Turning knowledge bases, memory, skills, and MCP into long-term personal leverage
+- Using a local API gateway to unify models, CLI tools, and external workflows
+
+## Core Direction
+
+- **Coding First** — Designed for real development work with agent mode, code analysis, command execution, and project-level context
+- **Workspace First** — Conversations, files, knowledge, memory, skills, and tools live in one workspace instead of scattered silos
+- **Local First** — Local storage, local indexing, and a local gateway come first so data, performance, and portability stay under your control
+- **Knowledge That Compounds** — Conversations, documents, tool configuration, and execution results become context for future work
+
 ## Screenshots
 
 | Chat Chart Rendering | Providers & Models |

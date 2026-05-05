@@ -209,6 +209,68 @@ describe('conversationStore pagination', () => {
     vi.useRealTimers();
   });
 
+  it('waits for a pending conversation model update before sending a message', async () => {
+    vi.useFakeTimers();
+    const updateDeferred = deferred<ReturnType<typeof makeConversation>>();
+
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'update_conversation') {
+        return updateDeferred.promise;
+      }
+      if (cmd === 'send_message') {
+        return Promise.resolve({
+          ...makeMessage(1),
+          id: 'user-real',
+          role: 'user',
+          content: 'question',
+          provider_id: null,
+          model_id: null,
+        });
+      }
+      if (cmd === 'list_messages_page') {
+        return Promise.resolve(makePage([], false));
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+
+    const { useConversationStore } = await import('../conversationStore');
+
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      conversations: [makeConversation('conv-1')] as never[],
+      messages: [],
+    });
+
+    const updatePromise = useConversationStore.getState().updateConversation('conv-1', {
+      provider_id: 'provider-2',
+      model_id: 'model-2',
+    });
+    const sendPromise = useConversationStore.getState().sendMessage('question');
+
+    await flushPromises();
+    expect(invokeMock).not.toHaveBeenCalledWith('send_message', expect.anything());
+
+    updateDeferred.resolve(makeConversation('conv-1', {
+      provider_id: 'provider-2',
+      model_id: 'model-2',
+    }));
+    await updatePromise;
+    await flushPromises();
+
+    expect(invokeMock).toHaveBeenCalledWith('send_message', expect.objectContaining({
+      conversationId: 'conv-1',
+    }));
+    expect(
+      useConversationStore
+        .getState()
+        .messages.find((message) => message.role === 'assistant')?.model_id,
+    ).toBe('model-2');
+
+    await vi.advanceTimersByTimeAsync(600);
+    await sendPromise;
+    vi.useRealTimers();
+  });
+
   it('keeps RAG display state when the streaming assistant resolves from temp to real id', async () => {
     vi.useFakeTimers();
     const listeners = new Map<string, (event: unknown) => void>();

@@ -26,15 +26,23 @@ export function ChatPage() {
   }, [conversationCount, fetchConversations, fetchProviders, providerCount]);
 
   return (
-    <div className="flex h-full" style={{ overflow: 'hidden' }}>
+    <div
+      className="flex h-full"
+      style={{
+        overflow: 'hidden',
+        gap: 0,
+        padding: 0,
+        backgroundColor: token.colorBgContainer,
+      }}
+    >
       <div
         className="h-full"
         style={{
-          width: sidebarCollapsed ? 44 : 256,
-          minWidth: sidebarCollapsed ? 44 : 256,
+          width: sidebarCollapsed ? 48 : 252,
+          minWidth: sidebarCollapsed ? 48 : 252,
           overflow: 'hidden',
-          borderRight: '1px solid var(--border-color)',
-          backgroundColor: token.colorBgContainer,
+          backgroundColor: token.colorFillQuaternary,
+          borderRight: `1px solid ${token.colorBorderSecondary}`,
           transition: 'width 0.18s ease, min-width 0.18s ease',
         }}
       >
@@ -42,7 +50,7 @@ export function ChatPage() {
           <div
             style={{
               display: 'flex',
-              alignItems: 'flex-start',
+              alignItems: 'center',
               justifyContent: 'center',
               paddingTop: 10,
             }}
@@ -67,7 +75,8 @@ export function ChatPage() {
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          backgroundColor: token.colorBgElevated,
+          backgroundColor: token.colorBgContainer,
+          borderTopLeftRadius: 12,
         }}
       >
         <ChatView />

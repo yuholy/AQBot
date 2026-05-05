@@ -6,6 +6,28 @@
     <a href="https://www.producthunt.com/products/aqbot?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-aqbot" target="_blank" rel="noopener noreferrer"><img alt="AQBot - Lightweight, high-perf cross-platform AI desktop client | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1118403&amp;theme=light&amp;t=1775627359538"></a>
 </p>
 
+## AQBot 是什么
+
+AQBot 是一个**本地优先的 AI Coding Workspace**，把写代码、对话记录、知识库、技能、MCP 与文件工作流放进同一个桌面应用。
+
+它既能像 coding agent 一样帮助你读写代码、运行命令、分析项目，也能把聊天记录、文档资料、技能配置和工具上下文沉淀成可复用的个人知识系统。
+
+相比把聊天、知识库、工具调用、API 网关分散在多个应用中，AQBot 更关注一种连续的工作流：**提问、编码、检索、执行、沉淀、复用** 都在同一个上下文里完成。
+
+## 适合什么场景
+
+- 把 AQBot 当成日常写代码的 AI 工作台，而不只是聊天窗口
+- 保留完整对话历史、项目上下文与决策过程，便于回溯和复用
+- 用知识库、记忆、技能和 MCP 把个人经验沉淀成长期资产
+- 用本地 API 网关统一接入模型、CLI 工具和外部工作流
+
+## 核心方向
+
+- **Coding First** — 面向真实开发任务设计，支持 Agent 模式、代码分析、命令执行与项目级上下文
+- **Workspace First** — 对话、文件、知识、记忆、技能与工具不分散，围绕同一个工作台组织
+- **Local First** — 本地存储、本地索引、本地网关优先，方便掌控数据、性能与可迁移性
+- **Knowledge That Compounds** — 每次对话、文档、工具配置和操作结果都可以沉淀成下一次工作的上下文
+
 ## 运行截图
 
 | 对话图表渲染 | 服务商与模型 |

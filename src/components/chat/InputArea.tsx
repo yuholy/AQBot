@@ -1176,7 +1176,7 @@ export function InputArea() {
   }, [currentMode, handleModeSwitch]);
 
   return (
-    <div className="px-4 pb-3 pt-1">
+    <div className="aqbot-chat-input-shell px-6 pb-4 pt-2">
       <input
         ref={fileInputRef}
         type="file"
@@ -1213,9 +1213,10 @@ export function InputArea() {
       <div
         ref={containerRef}
         style={{
-          border: '1px solid var(--border-color)',
-          borderRadius: 16,
-          backgroundColor: token.colorBgContainer,
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: 18,
+          backgroundColor: token.colorFillQuaternary,
+          boxShadow: 'none',
           overflow: 'hidden',
         }}
       >
@@ -1229,6 +1230,7 @@ export function InputArea() {
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
+            opacity: 0.72,
           }}
         >
           <GripHorizontal size={14} style={{ color: token.colorTextQuaternary, opacity: 0.5 }} />
@@ -1299,7 +1301,7 @@ export function InputArea() {
             border: 'none',
             outline: 'none',
             resize: 'none',
-            padding: '4px 16px 8px',
+            padding: '8px 18px 10px',
             fontSize: token.fontSize,
             lineHeight: 1.6,
             backgroundColor: 'transparent',
@@ -1312,8 +1314,8 @@ export function InputArea() {
         />
 
         {/* Bottom action bar */}
-        <div className="flex items-center justify-between px-2 pb-2">
-          <div className="flex items-center gap-0.5">
+        <div className="flex items-center justify-between px-3 pb-3">
+          <div className="flex items-center gap-1">
             {searchEnabled ? (
               <Tooltip title={t('chat.search.title')}>
                 <Button
@@ -1567,7 +1569,7 @@ export function InputArea() {
       </div>
 
       {/* Mode controls bar — below input container */}
-      <div className="flex items-center justify-between px-1 pt-1">
+      <div className="flex items-center justify-between px-1.5 pt-2">
         <div className="flex items-center gap-1">
           <Dropdown
             menu={{

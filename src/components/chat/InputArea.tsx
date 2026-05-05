@@ -3,7 +3,7 @@ import { Button, Tooltip, App, theme, Dropdown, Tag, Popover, Checkbox, Badge, P
 import type { MenuProps } from 'antd';
 import { Paperclip, Trash2, Mic, Eraser, Scissors, Globe, Brain, Atom, Plug, SlidersHorizontal, ArrowUp, Square, Check, Zap, ZapOff, Shrink, Upload, GitCompareArrows, X, BookOpen, GripHorizontal, CircleOff, SignalLow, SignalMedium, SignalHigh, Signal, Bot, MessageSquare, Shield, ShieldCheck, ShieldAlert, FolderOpen, ExternalLink, Code } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useConversationStore, useProviderStore, useSettingsStore, useSearchStore, useMcpStore, useMemoryStore, useKnowledgeStore } from '@/stores';
+import { useAgentStore, useConversationStore, useProviderStore, useSettingsStore, useSearchStore, useMcpStore, useMemoryStore, useKnowledgeStore } from '@/stores';
 import { useUIStore } from '@/stores/uiStore';
 import { findModelByIds, supportsReasoning, modelHasCapability } from '@/lib/modelCapabilities';
 import {
@@ -25,6 +25,14 @@ import { ModelIcon } from '@lobehub/icons';
 import type { AttachmentInput, ProviderType, RealtimeConfig } from '@/types';
 import { invoke } from '@/lib/invoke';
 import { open } from '@tauri-apps/plugin-dialog';
+import {
+  AGENT_EXECUTORS,
+  getAgentExecutorMeta,
+  getAgentExecutorStorageKey,
+  normalizeAgentExecutorId,
+  getAgentExecutorModelStorageKey,
+  type AgentExecutorId,
+} from '@/lib/agentExecutors';
 
 async function fileToAttachmentInput(file: File): Promise<AttachmentInput> {
   return new Promise((resolve) => {
@@ -44,7 +52,6 @@ async function fileToAttachmentInput(file: File): Promise<AttachmentInput> {
 
 // In-memory draft cache: persists input text per-conversation across component unmounts
 const _draftCache = new Map<string, string>();
-type AgentExecutorId = 'aqbot-local' | 'claude-code';
 
 export function InputArea() {
   const { t } = useTranslation();
@@ -88,6 +95,14 @@ export function InputArea() {
   const activeConversationId = useConversationStore((s) => s.activeConversationId);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const sendAgentMessage = useConversationStore((s) => s.sendAgentMessage);
+  const agentExecutorId = useConversationStore((s) => s.activeAgentExecutorId);
+  const activeAgentExecutorModel = useConversationStore((s) => s.activeAgentExecutorModel);
+  const setAgentExecutorId = useConversationStore((s) => s.setActiveAgentExecutorId);
+  const setActiveAgentExecutorModel = useConversationStore((s) => s.setActiveAgentExecutorModel);
+  const agentSessions = useAgentStore((s) => s.sessions);
+  const updateAgentCwd = useAgentStore((s) => s.updateCwd);
+  const updateAgentPermissionMode = useAgentStore((s) => s.updatePermissionMode);
+  const fetchAgentSession = useAgentStore((s) => s.fetchSession);
   const createConversation = useConversationStore((s) => s.createConversation);
   const messages = useConversationStore((s) => s.messages);
   const totalActiveCount = useConversationStore((s) => s.totalActiveCount);
@@ -140,10 +155,13 @@ export function InputArea() {
 
   // Agent permission mode state
   const [agentPermissionMode, setAgentPermissionMode] = useState<string>('default');
-  const [agentExecutorId, setAgentExecutorId] = useState<AgentExecutorId>('aqbot-local');
-
+  const [agentExecutorModel, setAgentExecutorModel] = useState<string | null>(null);
   // Agent working directory state
   const [agentCwd, setAgentCwd] = useState<string | null>(null);
+  const currentAgentSession = activeConversationId ? agentSessions[activeConversationId] : undefined;
+  const resolvedAgentCwd = currentAgentSession?.cwd ?? agentCwd;
+  const resolvedAgentPermissionMode = currentAgentSession?.permission_mode ?? agentPermissionMode;
+  const resolvedAgentExecutorModel = activeAgentExecutorModel ?? agentExecutorModel;
 
   // Knowledge base state
   const knowledgeBases = useKnowledgeStore((s) => s.bases);
@@ -194,8 +212,8 @@ export function InputArea() {
   // Fetch agent permission mode on mount/conversation switch
   useEffect(() => {
     if (currentMode === 'agent' && activeConversationId) {
-      invoke('agent_get_session', { conversationId: activeConversationId })
-        .then((session: any) => {
+      fetchAgentSession(activeConversationId)
+        .then((session) => {
           if (session) {
             setAgentPermissionMode(session.permission_mode || 'default');
             setAgentCwd(session.cwd || null);
@@ -203,23 +221,42 @@ export function InputArea() {
         })
         .catch(() => {});
     }
-  }, [currentMode, activeConversationId]);
+  }, [currentMode, activeConversationId, fetchAgentSession]);
+
+  useEffect(() => {
+    if (currentMode !== 'agent') return;
+    setAgentCwd(currentAgentSession?.cwd || null);
+    setAgentPermissionMode(currentAgentSession?.permission_mode || 'default');
+  }, [currentMode, currentAgentSession?.cwd, currentAgentSession?.permission_mode]);
 
   useEffect(() => {
     if (!activeConversationId) {
       setAgentExecutorId('aqbot-local');
+      setAgentExecutorModel(null);
       return;
     }
-    const saved = localStorage.getItem(`aqbot:agent-executor:${activeConversationId}`);
-    setAgentExecutorId(saved === 'claude-code' ? 'claude-code' : 'aqbot-local');
-  }, [activeConversationId]);
+    const saved = localStorage.getItem(getAgentExecutorStorageKey(activeConversationId));
+    setAgentExecutorId(normalizeAgentExecutorId(saved));
+  }, [activeConversationId, setAgentExecutorId]);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      setAgentExecutorModel(null);
+      return;
+    }
+    const savedModel = localStorage.getItem(getAgentExecutorModelStorageKey(activeConversationId, agentExecutorId));
+    setAgentExecutorModel(savedModel || null);
+  }, [activeConversationId, agentExecutorId]);
 
   const handleAgentExecutorChange = useCallback((executorId: AgentExecutorId) => {
     setAgentExecutorId(executorId);
     if (activeConversationId) {
-      localStorage.setItem(`aqbot:agent-executor:${activeConversationId}`, executorId);
+      const savedModel = localStorage.getItem(getAgentExecutorModelStorageKey(activeConversationId, executorId));
+      setAgentExecutorModel(savedModel || null);
+    } else {
+      setAgentExecutorModel(null);
     }
-  }, [activeConversationId]);
+  }, [activeConversationId, setAgentExecutorId]);
 
   // Draft persistence: save old draft & restore new when conversation changes
   useEffect(() => {
@@ -404,10 +441,7 @@ export function InputArea() {
 
     const applyChange = async () => {
       try {
-        await invoke('agent_update_session', {
-          conversationId: activeConversationId,
-          permissionMode: mode,
-        });
+        await updateAgentPermissionMode(activeConversationId, mode);
         setAgentPermissionMode(mode);
       } catch (e) {
         console.warn('Failed to update permission mode:', e);
@@ -431,39 +465,62 @@ export function InputArea() {
     } else {
       await applyChange();
     }
-  }, [activeConversationId, t]);
+  }, [activeConversationId, modal, t, updateAgentPermissionMode]);
 
   const permissionModeIcon = useMemo(() => {
-    switch (agentPermissionMode) {
+    switch (resolvedAgentPermissionMode) {
       case 'accept_edits': return <ShieldCheck size={14} style={{ color: '#1890ff' }} />;
       case 'full_access': return <ShieldAlert size={14} style={{ color: '#ff4d4f' }} />;
       default: return <Shield size={14} />;
     }
-  }, [agentPermissionMode]);
+  }, [resolvedAgentPermissionMode]);
 
   const permissionModeLabel = useMemo(() => {
-    switch (agentPermissionMode) {
+    switch (resolvedAgentPermissionMode) {
       case 'accept_edits': return t('common.permissionAcceptEdits');
       case 'full_access': return t('common.permissionFullAccess');
       default: return t('common.permissionDefault');
     }
-  }, [agentPermissionMode, t]);
+  }, [resolvedAgentPermissionMode, t]);
 
-  const agentExecutorItems = useMemo<MenuProps['items']>(() => [
-    {
-      key: 'aqbot-local',
-      label: 'AQBot Local',
-      icon: <Bot size={14} />,
-    },
-    {
-      key: 'claude-code',
-      label: 'Claude Code',
-      icon: <Code size={14} />,
-    },
-  ], []);
+  const agentExecutorItems = useMemo<MenuProps['items']>(() => AGENT_EXECUTORS.map((executor) => ({
+    key: executor.id,
+    label: executor.name,
+    icon: executor.id === 'claude-code'
+      ? <Code size={14} />
+      : executor.id === 'deepseek-tui'
+        ? <Brain size={14} />
+        : <Bot size={14} />,
+  })), []);
 
-  const agentExecutorLabel = agentExecutorId === 'claude-code' ? 'Claude Code' : 'AQBot Local';
-  const agentExecutorIcon = agentExecutorId === 'claude-code' ? <Code size={14} /> : <Bot size={14} />;
+  const agentExecutor = getAgentExecutorMeta(agentExecutorId);
+  const agentExecutorLabel = agentExecutor.name;
+  const agentExecutorIcon = agentExecutorId === 'claude-code'
+    ? <Code size={14} />
+    : agentExecutorId === 'deepseek-tui'
+      ? <Brain size={14} />
+      : <Bot size={14} />;
+  const agentModelItems = useMemo<MenuProps['items']>(() => {
+    if (!agentExecutor.supportsModelSelection) return [];
+    const options = agentExecutor.modelOptions ?? [];
+    return [
+      {
+        key: '__default__',
+        label: 'Use executor default',
+      },
+      ...options.map((model) => ({
+        key: model,
+        label: model,
+      })),
+    ];
+  }, [agentExecutor]);
+  const agentModelLabel = resolvedAgentExecutorModel || 'Executor model';
+
+  const handleAgentModelChange = useCallback((modelKey: string) => {
+    const nextModel = modelKey === '__default__' ? null : modelKey;
+    setAgentExecutorModel(nextModel);
+    setActiveAgentExecutorModel(nextModel);
+  }, [setActiveAgentExecutorModel]);
 
   // Agent CWD helpers
   const abbreviatePath = useCallback((path: string): string => {
@@ -481,16 +538,13 @@ export function InputArea() {
         title: t('common.selectDirectory'),
       });
       if (selected && typeof selected === 'string') {
-        await invoke('agent_update_session', {
-          conversationId: activeConversationId,
-          cwd: selected,
-        });
+        await updateAgentCwd(activeConversationId, selected);
         setAgentCwd(selected);
       }
     } catch (e) {
       console.warn('Failed to select working directory:', e);
     }
-  }, [activeConversationId, t]);
+  }, [activeConversationId, t, updateAgentCwd]);
 
   // Knowledge base popover content
   const kbPopoverContent = useMemo(() => {
@@ -783,17 +837,12 @@ export function InputArea() {
         if (companionStorageKey) localStorage.removeItem(companionStorageKey);
       }
       try {
-        const session = await invoke<{ cwd: string | null }>('agent_update_session', {
-          conversationId: activeConversation.id,
-        });
-        if (!session.cwd) {
+        const session = await fetchAgentSession(activeConversation.id);
+        if (!session?.cwd) {
           const workspacePath = await invoke<string>('agent_ensure_workspace', {
             conversationId: activeConversation.id,
           });
-          await invoke('agent_update_session', {
-            conversationId: activeConversation.id,
-            cwd: workspacePath,
-          });
+          await updateAgentCwd(activeConversation.id, workspacePath);
           setAgentCwd(workspacePath);
         } else {
           setAgentCwd(session.cwd);
@@ -802,7 +851,7 @@ export function InputArea() {
         console.warn('Failed to init agent session:', e);
       }
     }
-  }, [activeConversation, updateConversation, companionModels, companionStorageKey]);
+  }, [activeConversation, updateConversation, companionModels, companionStorageKey, fetchAgentSession, updateAgentCwd]);
 
   const handleSend = useCallback(async () => {
     const trimmed = value.trim();
@@ -848,8 +897,9 @@ export function InputArea() {
       if (currentMode === 'agent') {
         await sendAgentMessage(trimmed, attachments, {
           executorId: agentExecutorId,
-          cwd: agentCwd,
-          permissionMode: agentPermissionMode,
+          cwd: resolvedAgentCwd,
+          permissionMode: resolvedAgentPermissionMode,
+          executorModel: resolvedAgentExecutorModel,
         });
       } else if (companionModels.length > 0) {
         await sendMultiModelMessage(trimmed, companionModels, attachments, searchEnabled ? searchProviderId : null);
@@ -873,7 +923,7 @@ export function InputArea() {
         }
       });
     }
-  }, [value, attachedFiles, sendMessage, sendAgentMessage, sendMultiModelMessage, companionModels, activeConversationId, providers, settings, createConversation, messageApi, t, searchEnabled, searchProviderId, currentMode, agentExecutorId, agentCwd, agentPermissionMode]);
+  }, [value, attachedFiles, sendMessage, sendAgentMessage, sendMultiModelMessage, companionModels, activeConversationId, providers, settings, createConversation, messageApi, t, searchEnabled, searchProviderId, currentMode, agentExecutorId, resolvedAgentCwd, resolvedAgentPermissionMode, resolvedAgentExecutorModel]);
 
   const handleFillLastMessage = useCallback(() => {
     if (streaming) return;
@@ -1548,26 +1598,61 @@ export function InputArea() {
             </Button>
           </Dropdown>
           {currentMode === 'agent' && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+              <Dropdown
+                menu={{
+                  items: agentExecutorItems,
+                  selectedKeys: [agentExecutorId],
+                  onClick: ({ key }) => handleAgentExecutorChange(key as AgentExecutorId),
+                }}
+                trigger={['click']}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  icon={agentExecutorIcon}
+                  style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+                >
+                  {agentExecutorLabel}
+                </Button>
+              </Dropdown>
+              <Tooltip title="Agent executor settings">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<SlidersHorizontal size={13} />}
+                  style={{ minWidth: 24, padding: '0 4px' }}
+                  onClick={() => {
+                    setSettingsSection('agentExecutors');
+                    setActivePage('settings');
+                  }}
+                />
+              </Tooltip>
+            </div>
+          )}
+          {currentMode === 'agent' && agentExecutor.supportsModelSelection && (
             <Dropdown
               menu={{
-                items: agentExecutorItems,
-                selectedKeys: [agentExecutorId],
-                onClick: ({ key }) => handleAgentExecutorChange(key as AgentExecutorId),
+                items: agentModelItems,
+                selectedKeys: [resolvedAgentExecutorModel ?? '__default__'],
+                onClick: ({ key }) => handleAgentModelChange(String(key)),
               }}
               trigger={['click']}
             >
               <Button
                 type="text"
                 size="small"
-                icon={agentExecutorIcon}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+                icon={<Atom size={14} />}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, maxWidth: 180, fontSize: 12 }}
               >
-                {agentExecutorLabel}
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {agentModelLabel}
+                </span>
               </Button>
             </Dropdown>
           )}
           {currentMode === 'agent' && (
-            <Tooltip title={agentCwd || t('common.workingDirectory')}>
+            <Tooltip title={resolvedAgentCwd || 'Choose Agent workspace'}>
               <Button
                 type="text"
                 size="small"
@@ -1576,12 +1661,12 @@ export function InputArea() {
                 style={{ display: 'flex', alignItems: 'center', gap: 4, maxWidth: 200, fontSize: 12 }}
               >
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {agentCwd ? abbreviatePath(agentCwd) : t('common.selectDirectory')}
+                  {resolvedAgentCwd ? abbreviatePath(resolvedAgentCwd) : 'Choose workspace'}
                 </span>
               </Button>
             </Tooltip>
           )}
-          {currentMode === 'agent' && agentCwd && (
+          {currentMode === 'agent' && resolvedAgentCwd && (
             <Tooltip title={t('common.openDirectory', '打开目录')}>
               <Button
                 type="text"
@@ -1590,7 +1675,7 @@ export function InputArea() {
                 onClick={async () => {
                   try {
                     const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
-                    await revealItemInDir(agentCwd);
+                    await revealItemInDir(resolvedAgentCwd);
                   } catch (e) {
                     console.warn('Failed to open directory:', e);
                   }
@@ -1605,7 +1690,7 @@ export function InputArea() {
             <Dropdown
               menu={{
                 items: permissionModeItems,
-                selectedKeys: [agentPermissionMode],
+                selectedKeys: [resolvedAgentPermissionMode],
                 onClick: ({ key }) => handlePermissionModeChange(key),
               }}
               trigger={['click']}
@@ -1617,7 +1702,7 @@ export function InputArea() {
                 icon={permissionModeIcon}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 4, fontSize: 12,
-                  ...(agentPermissionMode === 'full_access' ? { color: '#ff4d4f' } : {}),
+                  ...(resolvedAgentPermissionMode === 'full_access' ? { color: '#ff4d4f' } : {}),
                 }}
               >
                 {permissionModeLabel}

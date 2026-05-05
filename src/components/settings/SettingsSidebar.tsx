@@ -1,5 +1,21 @@
 import { Menu, theme } from 'antd';
-import { Cloud, Settings, Palette, Globe, Zap, Database, Info, Search, Plug, CloudUpload, Bot, HardDrive, MessageSquare, ArrowLeft, Network } from 'lucide-react';
+import {
+  ArrowLeft,
+  Bot,
+  Cloud,
+  CloudUpload,
+  Database,
+  Globe,
+  HardDrive,
+  Info,
+  MessageSquare,
+  Network,
+  Palette,
+  Plug,
+  Search,
+  Settings,
+  Zap,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useUIStore } from '@/stores';
 import type { SettingsSection } from '@/types';
@@ -17,6 +33,7 @@ const MENU_ICONS: Record<SettingsSection, React.ReactNode> = {
   about: <Info size={16} />,
   searchProviders: <Search size={16} />,
   mcpServers: <Plug size={16} />,
+  agentExecutors: <Bot size={16} />,
   externalAgents: <Network size={16} />,
   backup: <CloudUpload size={16} />,
 };
@@ -29,6 +46,7 @@ const SECTION_KEYS: SettingsSection[] = [
   'defaultModel',
   'searchProviders',
   'mcpServers',
+  'agentExecutors',
   'externalAgents',
   'proxy',
   'shortcuts',
@@ -48,12 +66,15 @@ export function SettingsSidebar() {
   const items = SECTION_KEYS.map((key) => ({
     key,
     icon: MENU_ICONS[key],
-    label: key === 'externalAgents' ? '外部 Agent' : t([`settings.${key}.title`, `settings.${key}`]),
+    label: key === 'agentExecutors'
+      ? 'Agent Executors'
+      : key === 'externalAgents'
+        ? 'External Agents'
+        : t([`settings.${key}.title`, `settings.${key}`]),
   }));
 
   return (
     <div className="h-full flex flex-col" data-os-scrollbar style={{ backgroundColor: token.colorBgContainer, overflowY: 'auto' }}>
-      {/* Back button */}
       <div
         className="flex items-center gap-2 cursor-pointer"
         style={{

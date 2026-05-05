@@ -1,8 +1,9 @@
 import { useState, useMemo, useCallback, useEffect, useRef, memo, startTransition } from 'react'
 import { Button, Input, App, theme, Tooltip, Avatar, Checkbox, Dropdown, Empty } from 'antd'
-import { MessageSquarePlus, Search, Archive, ListTodo, Trash2, Pencil, Share, Pin, PinOff, Loader, X, Undo2, ArrowLeft, FileImage, FileCode, FileType, FileText, FolderPlus, FolderOpen, GripVertical, ChevronRight, MessageSquareText, PanelLeftClose } from 'lucide-react'
+import { MessageSquarePlus, Search, Archive, ListTodo, Trash2, Pencil, Share, Pin, PinOff, Loader, X, Undo2, ArrowLeft, FileImage, FileCode, FileType, FileText, FolderPlus, FolderOpen, GripVertical, ChevronRight, MessageSquareText, PanelLeftClose, Bot, Brain, Code } from 'lucide-react'
 import { ModelIcon } from '@lobehub/icons'
 import { getConvIcon } from '@/lib/convIcon'
+import { getAgentExecutorMeta, getAgentExecutorStorageKey } from '@/lib/agentExecutors'
 import { exportAsMarkdown, exportAsText, exportAsPNG, exportAsJSON } from '@/lib/exportChat'
 import { invoke } from '@/lib/invoke'
 import Conversations from '@ant-design/x/es/conversations'
@@ -691,7 +692,27 @@ export function ChatSidebar() {
     const isStreaming = streamingConversationId === conv.id
     const customIcon = getConvIcon(conv.id)
     let icon: React.ReactNode
-    if (customIcon) {
+    if (conv.mode === 'agent') {
+      const executor = getAgentExecutorMeta(
+        typeof localStorage === 'undefined'
+          ? null
+          : localStorage.getItem(getAgentExecutorStorageKey(conv.id)),
+      )
+      const agentIcon = executor.id === 'claude-code'
+        ? <Code size={12} />
+        : executor.id === 'deepseek-tui'
+          ? <Brain size={12} />
+          : <Bot size={12} />
+      icon = (
+        <Tooltip title={executor.name}>
+          <Avatar
+            size={20}
+            icon={agentIcon}
+            style={{ backgroundColor: token.colorPrimaryBg, color: token.colorPrimary }}
+          />
+        </Tooltip>
+      )
+    } else if (customIcon) {
       if (customIcon.type === 'emoji') {
         icon = <Avatar size={20} style={{ fontSize: 12, backgroundColor: token.colorPrimaryBg }}>{customIcon.value}</Avatar>
       } else {
@@ -701,39 +722,6 @@ export function ChatSidebar() {
       icon = <ModelIcon model={conv.model_id} size={20} type="avatar" />
     } else {
       icon = <Avatar size={20} style={{ fontSize: 12, backgroundColor: token.colorPrimaryBg, color: token.colorPrimary }}>{(conv.title || '对')[0]}</Avatar>
-    }
-    if (conv.mode === 'agent') {
-      icon = (
-        <span style={{ position: 'relative', display: 'inline-flex', width: 20, height: 20 }}>
-          {icon}
-          <span
-            style={{
-              position: 'absolute',
-              top: -5,
-              right: -11,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxSizing: 'border-box',
-              padding: '0 3px',
-              height: 10,
-              lineHeight: 1,
-              borderRadius: 5,
-              fontSize: 7,
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              color: token.colorPrimary,
-              background: token.colorPrimaryBg,
-              border: `1px solid ${token.colorBgContainer}`,
-              pointerEvents: 'none',
-              transform: 'scale(0.9)',
-              transformOrigin: 'right top',
-            }}
-          >
-            Agent
-          </span>
-        </span>
-      )
     }
     if (isStreaming) {
       icon = (

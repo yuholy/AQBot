@@ -11,6 +11,7 @@ import {
   AboutPage,
   SearchProviderSettings,
   McpServerSettings,
+  AgentExecutorSettings,
   ExternalAgentSettings,
   BackupCenter,
   StorageSpaceManager,
@@ -32,6 +33,7 @@ const SECTION_COMPONENTS: Record<SettingsSection, React.ComponentType> = {
   about: AboutPage,
   searchProviders: SearchProviderSettings,
   mcpServers: McpServerSettings,
+  agentExecutors: AgentExecutorSettings,
   externalAgents: ExternalAgentSettings,
   backup: BackupCenter,
 };

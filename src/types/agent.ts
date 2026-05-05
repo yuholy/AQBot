@@ -61,6 +61,9 @@ export interface AgentDoneEvent {
   conversationId: string;
   assistantMessageId: string;
   text: string;
+  thinking?: string;
+  model?: string;
+  sessionId?: string;
   usage?: { input_tokens: number; output_tokens: number };
   numTurns?: number;
   costUsd?: number;

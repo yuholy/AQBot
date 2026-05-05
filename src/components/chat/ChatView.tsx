@@ -72,6 +72,7 @@ import { invoke } from '@/lib/invoke';
 import { registerHighlight } from 'stream-markdown';
 import { useResolvedAvatarSrc } from '@/hooks/useResolvedAvatarSrc';
 import type { Message, Attachment, ConversationStats } from '@/types';
+import { getAgentExecutorMeta } from '@/lib/agentExecutors';
 
 // ── markstream-react custom thinking component ──────────────────────────
 
@@ -143,6 +144,13 @@ function getLightweightMessagePreview(content: string, limit = 4000): string {
   const text = stripAqbotTags(content);
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}\n\n...`;
+}
+
+function abbreviateAgentPath(path?: string | null): string {
+  if (!path) return 'No workspace';
+  const segments = path.replace(/\\/g, '/').split('/').filter(Boolean);
+  if (segments.length <= 2) return path;
+  return `.../${segments.slice(-2).join('/')}`;
 }
 
 // ── Attachment preview component ────────────────────────────────────────
@@ -2059,6 +2067,8 @@ export function ChatView() {
   const multiModelParentId = useConversationStore((s) => s.multiModelParentId);
   const multiModelDoneMessageIds = useConversationStore((s) => s.multiModelDoneMessageIds);
   const thinkingActiveMessageIds = useConversationStore((s) => s.thinkingActiveMessageIds);
+  const activeAgentExecutorId = useConversationStore((s) => s.activeAgentExecutorId);
+  const activeAgentExecutorModel = useConversationStore((s) => s.activeAgentExecutorModel);
   const storeError = useConversationStore((s) => s.error);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const titleGeneratingConversationId = useConversationStore((s) => s.titleGeneratingConversationId);
@@ -2122,9 +2132,29 @@ export function ChatView() {
   }, []);
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId);
+  const activeAgentExecutor = getAgentExecutorMeta(activeAgentExecutorId);
+  const showHeaderModelSelector = activeConversation?.mode !== 'agent' || activeAgentExecutor.id === 'aqbot-local';
   const isTitleGenerating = activeConversationId != null && titleGeneratingConversationId === activeConversationId;
+  const renderAgentExecutorAvatar = useCallback((size: number) => {
+    const iconSize = Math.max(14, Math.round(size * 0.55));
+    const icon = activeAgentExecutor.id === 'claude-code'
+      ? <Code size={iconSize} />
+      : activeAgentExecutor.id === 'deepseek-tui'
+        ? <Brain size={iconSize} />
+        : <Bot size={iconSize} />;
+
+    return (
+      <Avatar
+        size={size}
+        icon={icon}
+        style={{ background: token.colorPrimary, color: token.colorTextLightSolid }}
+      />
+    );
+  }, [activeAgentExecutor.id, token.colorPrimary, token.colorTextLightSolid]);
+
   const renderConvIconForChat = useCallback((size: number, modelId?: string | null) => {
     if (!activeConversation) return <Avatar icon={<Bot size={16} />} style={{ background: token.colorPrimary }} size={size} />;
+    if (activeConversation.mode === 'agent') return renderAgentExecutorAvatar(size);
     const customIcon = getConvIcon(activeConversation.id);
     if (customIcon) {
       if (customIcon.type === 'emoji') {
@@ -2137,7 +2167,7 @@ export function ChatView() {
       return <ModelIcon model={mid} size={size} type="avatar" />;
     }
     return <Avatar icon={<Bot size={16} />} style={{ background: token.colorPrimary }} size={size} />;
-  }, [activeConversation, token.colorPrimary, token.colorPrimaryBg]);
+  }, [activeConversation, renderAgentExecutorAvatar, token.colorPrimary, token.colorPrimaryBg]);
 
   // ── User avatar helper (mirrors Sidebar.tsx pattern) ───────────────
   const renderUserAvatar = useCallback(() => {
@@ -2389,6 +2419,7 @@ export function ChatView() {
   // Load agent tool history from DB on conversation switch
   useEffect(() => {
     if (activeConversation?.mode === 'agent' && activeConversationId) {
+      void useAgentStore.getState().fetchSession(activeConversationId);
       useAgentStore.getState().loadToolHistory(activeConversationId);
     }
   }, [activeConversationId, activeConversation?.mode]);
@@ -2410,6 +2441,21 @@ export function ChatView() {
   const currentAgentStatus = useAgentStore(
     (s) => (activeConversationId ? s.agentStatus[activeConversationId] : undefined),
   );
+  const currentAgentSession = useAgentStore(
+    (s) => (activeConversationId ? s.sessions[activeConversationId] : undefined),
+  );
+  const agentPermissionLabel = useMemo(() => {
+    switch (currentAgentSession?.permission_mode) {
+      case 'accept_edits':
+        return t('common.permissionAcceptEdits');
+      case 'full_access':
+        return t('common.permissionFullAccess');
+      default:
+        return t('common.permissionDefault');
+    }
+  }, [currentAgentSession?.permission_mode, t]);
+  const isAgentRunning = Boolean(streaming || currentAgentStatus);
+  const agentRuntimeStatusLabel = isAgentRunning ? '运行中' : '待命';
 
   const agentToolCalls = useAgentStore((s) => s.toolCalls);
   const agentPendingPermissions = useAgentStore((s) => s.pendingPermissions);
@@ -3255,6 +3301,7 @@ export function ChatView() {
     // bubbleData.key is parent_message_id for stable rendering
     const msg = assistantByParentId.get(String(bubbleData.key)) ?? messageById.get(String(bubbleData.key));
     const isStreaming = streaming && msg?.id === streamingMessageId;
+    const isAgentMsg = activeConversation?.mode === 'agent';
     const shouldRenderFromContent = shouldRenderAssistantMarkdownFromContent(
       isStreaming,
       Boolean(msg?.id && contentRendererMessageIdsRef.current.has(msg.id)),
@@ -3270,7 +3317,6 @@ export function ChatView() {
     // Never let Ant Design Bubble's loading state replace AI content while a
     // stream is active; the markdown renderer receives incremental content and
     // the content area renders its own lightweight placeholder before the first token.
-    const isAgentMsg = activeConversation?.mode === 'agent';
     const bubbleLoading = false;
 
     // Determine effective display mode for this message
@@ -3304,7 +3350,11 @@ export function ChatView() {
     return {
       placement: 'start' as const,
       ...getBubbleVariant(false),
-      avatar: isNonTabsMultiModel ? undefined : renderConvIconForChat(32, msg?.model_id),
+      avatar: isNonTabsMultiModel
+        ? undefined
+        : isAgentMsg
+          ? renderAgentExecutorAvatar(32)
+          : renderConvIconForChat(32, msg?.model_id),
       loading: bubbleLoading,
       contentRender: (content: string) => {
         const renderContent = typeof content === 'string' && content.length > 0
@@ -3452,6 +3502,40 @@ export function ChatView() {
       header: (() => {
         if (isNonTabsMultiModel) return null;
         const { modelName, providerName } = getModelDisplayInfo(msg?.model_id, msg?.provider_id);
+        if (isAgentMsg) {
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <Tag style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '18px', color: token.colorPrimary, backgroundColor: token.colorPrimaryBg, border: 'none' }}>
+                  Agent
+                </Tag>
+                <Typography.Text style={{ fontSize: 13 }}>
+                  {activeAgentExecutor.name}
+                </Typography.Text>
+                {activeAgentExecutor.id === 'aqbot-local' && modelName && modelName !== 'AI' && (
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    {modelName}
+                  </Typography.Text>
+                )}
+                {activeAgentExecutor.id !== 'aqbot-local' && activeAgentExecutorModel && (
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    {activeAgentExecutorModel}
+                  </Typography.Text>
+                )}
+                {msg && (
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    {formatTime(msg.created_at)}
+                  </Typography.Text>
+                )}
+                {msg?.status === 'partial' && !isStreaming && !(multiModelParentId && msg.parent_message_id === multiModelParentId) && (
+                  <Tag color="warning" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px', border: 'none' }}>
+                    {t('chat.partial')}
+                  </Tag>
+                )}
+              </div>
+            </div>
+          );
+        }
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -3522,7 +3606,7 @@ export function ChatView() {
         </div>
       ) : null,
     };
-  }, [activeConversation, activeConversationId, activeMessages, agentPendingPermissions, agentToolCalls, aiContentNodesById, assistantByParentId, codeBlockDarkTheme, codeBlockLightTheme, codeBlockThemes, deleteMessage, displayModeOverrides, formatTime, getBubbleVariant, getModelDisplayInfo, handleDisplayModeOverride, handleEditMessage, handleMultiModelDetected, isDarkMode, messageById, messages, multiModelDoneMessageIds, multiModelParentId, multiModelResponseParents, ragDisplayByMessageId, renderConvIconForChat, richRenderReady, settings, streaming, streamingMessageId, switchMessageVersion, t, token.colorPrimary, token.colorTextDescription]);
+  }, [activeAgentExecutor.id, activeAgentExecutor.name, activeAgentExecutorModel, activeConversation, activeConversationId, activeMessages, agentPendingPermissions, agentToolCalls, aiContentNodesById, assistantByParentId, codeBlockDarkTheme, codeBlockLightTheme, codeBlockThemes, deleteMessage, displayModeOverrides, formatTime, getBubbleVariant, getModelDisplayInfo, handleDisplayModeOverride, handleEditMessage, handleMultiModelDetected, isDarkMode, messageById, messages, multiModelDoneMessageIds, multiModelParentId, multiModelResponseParents, ragDisplayByMessageId, renderAgentExecutorAvatar, renderConvIconForChat, richRenderReady, settings, streaming, streamingMessageId, switchMessageVersion, t, token.colorPrimary, token.colorPrimaryBg, token.colorTextDescription]);
 
   const contextClearRole = useCallback((bubbleData: BubbleItemType) => {
     const msgId = String(bubbleData.content ?? '');
@@ -3800,7 +3884,7 @@ export function ChatView() {
 
             <div className="flex-1" />
 
-            <ModelSelector />
+            {showHeaderModelSelector && <ModelSelector />}
             <Popover
               content={<StatsPopoverContent stats={stats} t={t} token={token} />}
               trigger="click"
@@ -3820,10 +3904,43 @@ export function ChatView() {
           <>
             <Typography.Text type="secondary">{t('chat.welcome')}</Typography.Text>
             <div className="flex-1" />
-            <ModelSelector />
+            {showHeaderModelSelector && <ModelSelector />}
           </>
         )}
       </div>
+
+      {activeConversation?.mode === 'agent' && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '0 12px 10px',
+            flexWrap: 'wrap',
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+          }}
+        >
+          <Tag icon={activeAgentExecutor.id === 'deepseek-tui' ? <Brain size={12} /> : activeAgentExecutor.id === 'claude-code' ? <Code size={12} /> : <Bot size={12} />} color="blue" style={{ margin: 0 }}>
+            {activeAgentExecutor.name}
+          </Tag>
+          {activeAgentExecutorModel && (
+            <Tag style={{ margin: 0 }}>
+              {activeAgentExecutorModel}
+            </Tag>
+          )}
+          <Tooltip title={currentAgentSession?.cwd || 'No workspace selected'}>
+            <Tag style={{ margin: 0, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {abbreviateAgentPath(currentAgentSession?.cwd)}
+            </Tag>
+          </Tooltip>
+          <Tag style={{ margin: 0 }}>
+            {agentPermissionLabel}
+          </Tag>
+          <Tag color={isAgentRunning ? 'processing' : 'default'} style={{ margin: 0 }}>
+            {agentRuntimeStatusLabel}
+          </Tag>
+        </div>
+      )}
 
       {/* Message Area */}
       <div ref={messageAreaRef} data-message-area className={`flex-1 min-h-0 overflow-hidden relative bubble-${bubbleStyle || 'modern'}`}>

@@ -12,6 +12,13 @@ import {
 } from '@/lib/chatMultiModel';
 import { formatSearchContent, buildSearchTag } from '@/lib/searchUtils';
 import { buildKnowledgeTag, buildMemoryTag, type RagContextRetrievedEvent } from '@/lib/memoryUtils';
+import {
+  DEFAULT_AGENT_EXECUTOR_ID,
+  getAgentExecutorStorageKey,
+  getAgentExecutorModelStorageKey,
+  normalizeAgentExecutorId,
+  type AgentExecutorId,
+} from '@/lib/agentExecutors';
 import { useProviderStore } from '@/stores/providerStore';
 import { useSearchStore } from '@/stores/searchStore';
 import { useCategoryStore } from './categoryStore';
@@ -669,6 +676,10 @@ interface ConversationState {
   enabledMemoryNamespaceIds: string[];
   setEnabledMemoryNamespaceIds: (ids: string[]) => void;
   toggleMemoryNamespace: (id: string) => void;
+  activeAgentExecutorId: AgentExecutorId;
+  activeAgentExecutorModel: string | null;
+  setActiveAgentExecutorId: (id: AgentExecutorId) => void;
+  setActiveAgentExecutorModel: (model: string | null) => void;
   /** Insert a context-clear marker into the conversation */
   insertContextClear: () => Promise<void>;
   /** Remove a context-clear marker */
@@ -704,7 +715,7 @@ interface ConversationState {
   sendAgentMessage: (
     content: string,
     attachments?: AttachmentInput[],
-    options?: { executorId?: 'aqbot-local' | 'claude-code'; cwd?: string | null; permissionMode?: string | null },
+    options?: { executorId?: AgentExecutorId; cwd?: string | null; permissionMode?: string | null; executorModel?: string | null },
   ) => Promise<void>;
   regenerateMessage: (targetMessageId?: string) => Promise<void>;
   regenerateWithModel: (targetMessageId: string, providerId: string, modelId: string) => Promise<void>;
@@ -962,6 +973,33 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   thinkingLevel: null,
   enabledKnowledgeBaseIds: [],
   enabledMemoryNamespaceIds: [],
+  activeAgentExecutorId: DEFAULT_AGENT_EXECUTOR_ID,
+  activeAgentExecutorModel: null,
+  setActiveAgentExecutorId: (id) => {
+    const executorId = normalizeAgentExecutorId(id);
+    const conversationId = get().activeConversationId;
+    const savedModel = conversationId && typeof localStorage !== 'undefined'
+      ? localStorage.getItem(getAgentExecutorModelStorageKey(conversationId, executorId))
+      : null;
+    set({ activeAgentExecutorId: executorId, activeAgentExecutorModel: savedModel || null });
+    if (conversationId) {
+      localStorage.setItem(getAgentExecutorStorageKey(conversationId), executorId);
+    }
+  },
+  setActiveAgentExecutorModel: (model) => {
+    const conversationId = get().activeConversationId;
+    const executorId = get().activeAgentExecutorId;
+    const normalized = model?.trim() ? model.trim() : null;
+    set({ activeAgentExecutorModel: normalized });
+    if (conversationId && typeof localStorage !== 'undefined') {
+      const key = getAgentExecutorModelStorageKey(conversationId, executorId);
+      if (normalized) {
+        localStorage.setItem(key, normalized);
+      } else {
+        localStorage.removeItem(key);
+      }
+    }
+  },
   setSearchEnabled: (enabled) => {
     const previous = get().searchEnabled;
     const conversationId = get().activeConversationId;
@@ -1262,6 +1300,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set({
         activeConversationId: null,
         messages: [],
+        activeAgentExecutorId: DEFAULT_AGENT_EXECUTOR_ID,
+        activeAgentExecutorModel: null,
         loading: false,
         loadingOlder: false,
         hasOlderMessages: false,
@@ -1282,9 +1322,17 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
 
     const cachedPage = readCachedConversationPage(id);
+    const savedExecutorId = typeof localStorage === 'undefined'
+      ? DEFAULT_AGENT_EXECUTOR_ID
+      : normalizeAgentExecutorId(localStorage.getItem(getAgentExecutorStorageKey(id)));
+    const savedExecutorModel = typeof localStorage === 'undefined'
+      ? null
+      : localStorage.getItem(getAgentExecutorModelStorageKey(id, savedExecutorId));
 
     set({
       activeConversationId: id,
+      activeAgentExecutorId: savedExecutorId,
+      activeAgentExecutorModel: savedExecutorModel || null,
       messages: cachedPage?.messages ?? [],
       loading: !cachedPage || cachedPage.messages.length === 0,
       loadingOlder: false,
@@ -1984,6 +2032,21 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             return;
           }
 
+          const finalThinking = event.payload.thinking?.trim() ? event.payload.thinking : null;
+          const finalContent = finalThinking
+            ? `<think data-aqbot="1">\n${finalThinking}\n</think>\n\n${event.payload.text}`
+            : event.payload.text;
+          if (options?.executorId && options.executorId !== 'aqbot-local' && event.payload.model) {
+            const normalizedModel = event.payload.model.trim();
+            if (normalizedModel) {
+              const storageKey = getAgentExecutorModelStorageKey(conversationId, options.executorId);
+              localStorage.setItem(storageKey, normalizedModel);
+              if (get().activeConversationId === conversationId && get().activeAgentExecutorId === options.executorId) {
+                set({ activeAgentExecutorModel: normalizedModel });
+              }
+            }
+          }
+
           set((s) => ({
             streaming: false,
             streamingMessageId: null,
@@ -1998,7 +2061,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 return {
                   ...m,
                   id: event.payload.assistantMessageId || m.id,
-                  content: event.payload.text,
+                  content: finalContent,
+                  thinking: finalThinking,
                   status: 'complete' as const,
                   prompt_tokens: event.payload.usage?.input_tokens ?? null,
                   completion_tokens: event.payload.usage?.output_tokens ?? null,
@@ -2064,6 +2128,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           prompt: content,
           cwd: options.cwd || undefined,
           permissionMode: options.permissionMode || undefined,
+          model: options.executorModel || undefined,
+        });
+      } else if (options?.executorId === 'deepseek-tui') {
+        await invoke('agent_query_deepseek_tui', {
+          conversationId,
+          prompt: content,
+          cwd: options.cwd || undefined,
+          permissionMode: options.permissionMode || undefined,
+          model: options.executorModel || undefined,
         });
       } else {
         await invoke('agent_query', {

@@ -118,7 +118,10 @@ async fn create_full_zip_backup(
     create_sqlite_backup(db, &temp_db_path).await?;
 
     let documents_dir = storage_paths::documents_root();
-    let workspace_dir = app_data_dir.join("workspace");
+    let workspace_dir = app_data_dir
+        .parent()
+        .unwrap_or(app_data_dir)
+        .join("workspace");
     let master_key_path = app_data_dir.join("master.key");
     let object_counts = count_objects(db).await?;
 

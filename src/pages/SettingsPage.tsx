@@ -12,7 +12,6 @@ import {
   SearchProviderSettings,
   McpServerSettings,
   AgentExecutorSettings,
-  ExternalAgentSettings,
   BackupCenter,
   StorageSpaceManager,
 } from '@/components/settings';
@@ -34,14 +33,13 @@ const SECTION_COMPONENTS: Record<SettingsSection, React.ComponentType> = {
   searchProviders: SearchProviderSettings,
   mcpServers: McpServerSettings,
   agentExecutors: AgentExecutorSettings,
-  externalAgents: ExternalAgentSettings,
   backup: BackupCenter,
 };
 
 export function SettingsPage() {
   const { token } = theme.useToken();
   const settingsSection = useUIStore((s) => s.settingsSection);
-  const ContentComponent = SECTION_COMPONENTS[settingsSection];
+  const ContentComponent = SECTION_COMPONENTS[settingsSection as SettingsSection] ?? AgentExecutorSettings;
 
   return (
     <div className="flex h-full">

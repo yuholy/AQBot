@@ -9,7 +9,6 @@ import {
   HardDrive,
   Info,
   MessageSquare,
-  Network,
   Palette,
   Plug,
   Search,
@@ -34,7 +33,6 @@ const MENU_ICONS: Record<SettingsSection, React.ReactNode> = {
   searchProviders: <Search size={16} />,
   mcpServers: <Plug size={16} />,
   agentExecutors: <Bot size={16} />,
-  externalAgents: <Network size={16} />,
   backup: <CloudUpload size={16} />,
 };
 
@@ -47,7 +45,6 @@ const SECTION_KEYS: SettingsSection[] = [
   'searchProviders',
   'mcpServers',
   'agentExecutors',
-  'externalAgents',
   'proxy',
   'shortcuts',
   'data',
@@ -68,9 +65,7 @@ export function SettingsSidebar() {
     icon: MENU_ICONS[key],
     label: key === 'agentExecutors'
       ? 'Agent Executors'
-      : key === 'externalAgents'
-        ? 'External Agents'
-        : t([`settings.${key}.title`, `settings.${key}`]),
+      : t([`settings.${key}.title`, `settings.${key}`]),
   }));
 
   return (

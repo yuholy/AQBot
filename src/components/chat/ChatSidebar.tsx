@@ -1448,13 +1448,13 @@ export function ChatSidebar() {
         }
         .aqbot-chat-category-label {
           color: var(--aqbot-sidebar-text-heading);
-          font-size: 12px;
+          font-size: 13px;
           font-weight: 700;
           letter-spacing: 0.01em;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-collapse-trigger {
           color: var(--aqbot-sidebar-text-tertiary);
-          font-size: 12px;
+          font-size: 13px;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item {
           color: ${token.colorTextSecondary};
@@ -1473,7 +1473,7 @@ export function ChatSidebar() {
           font-weight: 600;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-label {
-          font-size: 12px;
+          font-size: 13px;
           line-height: 1.3;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .aqbot-chat-conversation-item-in-category {

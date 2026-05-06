@@ -198,10 +198,20 @@ pub async fn webdav_restore(
     // 7b. Restore workspace if present
     if contents.has_workspace {
         let ws_source = temp_dir.join("workspace");
-        let ws_target = state.app_data_dir.join("workspace");
+        let ws_target = crate::paths::aqbot_home().join("workspace");
         if ws_source.exists() {
             copy_directory(&ws_source, &ws_target)
                 .map_err(|e| format!("Failed to restore workspace: {}", e))?;
+        }
+    }
+
+    // 7c. Restore skills if present
+    if contents.has_skills {
+        let skills_source = temp_dir.join("aqbot_home").join("skills");
+        let skills_target = crate::paths::aqbot_home().join("skills");
+        if skills_source.exists() {
+            copy_directory(&skills_source, &skills_target)
+                .map_err(|e| format!("Failed to restore skills: {}", e))?;
         }
     }
 
@@ -369,7 +379,7 @@ async fn do_webdav_backup_once(
     };
 
     // 4b. Workspace directory (always included if present)
-    let workspace_root = app_data_dir.join("workspace");
+    let workspace_root = crate::paths::aqbot_home().join("workspace");
     let workspace_dir = if workspace_root.exists() {
         Some(workspace_root)
     } else {

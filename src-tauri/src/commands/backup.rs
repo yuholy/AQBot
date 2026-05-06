@@ -320,10 +320,22 @@ async fn restore_backup_zip(
 
     if contents.has_workspace {
         let ws_source = temp_dir.join("workspace");
-        let ws_target = app_data_dir.join("workspace");
+        let ws_target = app_data_dir
+            .parent()
+            .unwrap_or(app_data_dir)
+            .join("workspace");
         if ws_source.exists() {
             copy_directory(&ws_source, &ws_target)
                 .map_err(|e| format!("Failed to restore workspace: {}", e))?;
+        }
+    }
+
+    if contents.has_skills {
+        let skills_source = temp_dir.join("aqbot_home").join("skills");
+        let skills_target = app_data_dir.join("skills");
+        if skills_source.exists() {
+            copy_directory(&skills_source, &skills_target)
+                .map_err(|e| format!("Failed to restore skills: {}", e))?;
         }
     }
 

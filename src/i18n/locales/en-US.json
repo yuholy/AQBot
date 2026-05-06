@@ -942,6 +942,7 @@
     "defaultDir": "AQBot default backups directory",
     "effectiveDir": "Effective directory",
     "formatSqliteDesc": "Fast, direct restore",
+    "formatZipDesc": "Full package with database, keys, and files",
     "formatJsonDesc": "Readable, larger file",
     "localBackup": "Local Backup",
     "webdav": {

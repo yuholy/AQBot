@@ -34,6 +34,8 @@ pub struct BackupZipContents {
     pub metadata: serde_json::Value,
     pub has_documents: bool,
     pub has_workspace: bool,
+    pub has_vector_db: bool,
+    pub has_ssl: bool,
     pub master_key_path: Option<std::path::PathBuf>,
 }
 
@@ -281,6 +283,7 @@ pub fn create_backup_zip(
     documents_dir: Option<&Path>,
     workspace_dir: Option<&Path>,
     master_key_path: Option<&Path>,
+    aqbot_home_dir: Option<&Path>,
     dest_zip: &Path,
     app_version: &str,
     object_counts_json: &str,
@@ -311,6 +314,8 @@ pub fn create_backup_zip(
         "db_checksum": db_checksum,
         "include_documents": documents_dir.is_some(),
         "include_workspace": workspace_dir.is_some(),
+        "include_vector_db": aqbot_home_dir.map(|dir| dir.join("vector_db").exists()).unwrap_or(false),
+        "include_ssl": aqbot_home_dir.map(|dir| dir.join("ssl").exists()).unwrap_or(false),
         "object_counts": object_counts_json,
     });
     let metadata_json = serde_json::to_string_pretty(&metadata)
@@ -347,6 +352,19 @@ pub fn create_backup_zip(
         }
     }
 
+    // Optional: selected AQBot home subdirectories
+    if let Some(home_dir) = aqbot_home_dir {
+        let vector_db_dir = home_dir.join("vector_db");
+        if vector_db_dir.exists() {
+            add_directory_to_zip(&mut zip, &vector_db_dir, "aqbot_home/vector_db", options)?;
+        }
+
+        let ssl_dir = home_dir.join("ssl");
+        if ssl_dir.exists() {
+            add_directory_to_zip(&mut zip, &ssl_dir, "aqbot_home/ssl", options)?;
+        }
+    }
+
     zip.finish()
         .map_err(|e| AQBotError::Gateway(format!("ZIP finalize error: {}", e)))?;
     Ok(())
@@ -366,6 +384,8 @@ pub fn extract_backup_zip(zip_path: &Path, dest_dir: &Path) -> Result<BackupZipC
     let mut metadata = None;
     let mut has_documents = false;
     let mut has_workspace = false;
+    let mut has_vector_db = false;
+    let mut has_ssl = false;
     let mut master_key_path = None;
 
     for i in 0..archive.len() {
@@ -421,6 +441,26 @@ pub fn extract_backup_zip(zip_path: &Path, dest_dir: &Path) -> Result<BackupZipC
                 .map_err(|e| AQBotError::Gateway(format!("Failed to extract file: {}", e)))?;
             std::io::copy(&mut entry, &mut outfile)
                 .map_err(|e| AQBotError::Gateway(format!("Failed to extract file: {}", e)))?;
+        } else if name.starts_with("aqbot_home/vector_db/") && !entry.is_dir() {
+            has_vector_db = true;
+            let path = dest_dir.join(&name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            let mut outfile = std::fs::File::create(&path)
+                .map_err(|e| AQBotError::Gateway(format!("Failed to extract file: {}", e)))?;
+            std::io::copy(&mut entry, &mut outfile)
+                .map_err(|e| AQBotError::Gateway(format!("Failed to extract file: {}", e)))?;
+        } else if name.starts_with("aqbot_home/ssl/") && !entry.is_dir() {
+            has_ssl = true;
+            let path = dest_dir.join(&name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            let mut outfile = std::fs::File::create(&path)
+                .map_err(|e| AQBotError::Gateway(format!("Failed to extract file: {}", e)))?;
+            std::io::copy(&mut entry, &mut outfile)
+                .map_err(|e| AQBotError::Gateway(format!("Failed to extract file: {}", e)))?;
         }
     }
 
@@ -430,6 +470,8 @@ pub fn extract_backup_zip(zip_path: &Path, dest_dir: &Path) -> Result<BackupZipC
             .ok_or_else(|| AQBotError::Gateway("No metadata.json in backup ZIP".into()))?,
         has_documents,
         has_workspace,
+        has_vector_db,
+        has_ssl,
         master_key_path,
     })
 }

@@ -101,7 +101,7 @@ export function SidebarUserMenu() {
       .then((list) => {
         if (list.length > 0) {
           const raw = list[0].createdAt;
-          const d = new Date(raw.includes('T') || raw.includes('Z') ? raw : raw + 'Z');
+          const d = new Date(raw.includes('T') || raw.includes('Z') ? raw : `${raw}Z`);
           if (!Number.isNaN(d.getTime())) setLastLocalBackup(d.toLocaleString());
         }
       })
@@ -180,11 +180,11 @@ export function SidebarUserMenu() {
     }
   }, [pinned, saveSettings]);
 
-  const handleThemeChange: MenuProps['onClick'] = useCallback(({ key }) => {
+  const handleThemeChange: MenuProps['onClick'] = useCallback(({ key }: { key: string }) => {
     saveSettings({ theme_mode: key });
   }, [saveSettings]);
 
-  const handleLangChange: MenuProps['onClick'] = useCallback(({ key }) => {
+  const handleLangChange: MenuProps['onClick'] = useCallback(({ key }: { key: string }) => {
     i18n.changeLanguage(key);
     saveSettings({ language: key });
   }, [i18n, saveSettings]);
@@ -208,7 +208,7 @@ export function SidebarUserMenu() {
   const handleQuickBackup = useCallback(async (type: 'local' | 'webdav') => {
     setBackingUp(type);
     try {
-      if (type === 'local') await invoke('create_backup', { format: 'sqlite' });
+      if (type === 'local') await invoke('create_backup', { format: 'zip' });
       else await invoke('webdav_backup');
       message.success(t('backup.backupSuccess'));
       setBackupPopoverOpen(false);
@@ -219,7 +219,7 @@ export function SidebarUserMenu() {
     }
   }, [message, t]);
 
-  const handleGithubClick: MenuProps['onClick'] = useCallback(({ key }) => {
+  const handleGithubClick: MenuProps['onClick'] = useCallback(({ key }: { key: string }) => {
     let url = GITHUB_REPO;
     if (key === 'feature') url = `${GITHUB_REPO}/issues/new?labels=enhancement&template=feature_request.yml`;
     else if (key === 'bug') url = `${GITHUB_REPO}/issues/new?labels=bug&template=bug_report.yml`;
@@ -240,14 +240,32 @@ export function SidebarUserMenu() {
   }), []);
 
   const quickActionButtonStyle: React.CSSProperties = useMemo(() => ({
-    width: 32,
-    height: 32,
-    padding: 0,
-    borderRadius: 10,
+    width: '100%',
+    height: 54,
+    padding: '8px 10px',
+    borderRadius: 12,
     color: token.colorTextSecondary,
     backgroundColor: token.colorFillTertiary,
     border: `1px solid ${token.colorBorderSecondary}`,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: 6,
+    textAlign: 'left',
   }), [token.colorBorderSecondary, token.colorFillTertiary, token.colorTextSecondary]);
+
+  const actionLabelStyle: React.CSSProperties = useMemo(() => ({
+    fontSize: 12,
+    lineHeight: 1.1,
+    fontWeight: 500,
+  }), []);
+
+  const actionMetaStyle: React.CSSProperties = useMemo(() => ({
+    fontSize: 11,
+    lineHeight: 1.1,
+    color: token.colorTextTertiary,
+  }), [token.colorTextTertiary]);
 
   const renderUserAvatar = () => {
     const size = 34;
@@ -349,7 +367,7 @@ export function SidebarUserMenu() {
   );
 
   const popoverContent = (
-    <div style={{ width: 260 }}>
+    <div style={{ width: 292, display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         {renderUserAvatar()}
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -358,77 +376,113 @@ export function SidebarUserMenu() {
           </Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {themeMode === 'dark' ? t('settings.themeDark') : themeMode === 'light' ? t('settings.themeLight') : t('settings.themeSystem')}
-            {' · '}
+            {' / '}
             {LANG_OPTIONS.find((opt) => opt.key === i18n.language)?.label ?? i18n.language}
           </Typography.Text>
+          {countdownText ? (
+            <Typography.Text style={{ display: 'block', fontSize: 11, color: token.colorPrimary, marginTop: 4 }}>
+              {t('titlebar.nextBackup')}: {countdownText}
+            </Typography.Text>
+          ) : null}
         </div>
       </div>
 
-      <Divider style={{ margin: '12px 0' }} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Button
+          type="text"
+          onClick={() => {
+            setProfileModalOpen(true);
+            setMenuOpen(false);
+          }}
+          style={{
+            ...quickActionButtonStyle,
+            color: token.colorText,
+          }}
+        >
+          <User size={14} />
+          <span style={actionLabelStyle}>{t('userProfile.title')}</span>
+          <span style={actionMetaStyle}>{profile.name || 'AQBot User'}</span>
+        </Button>
 
-      <Button
-        type="text"
-        block
-        onClick={() => {
-          setProfileModalOpen(true);
-          setMenuOpen(false);
-        }}
-        style={{ justifyContent: 'flex-start', paddingInline: 8, marginBottom: 4 }}
-      >
-        {t('userProfile.title')}
-      </Button>
+        <Button
+          type="text"
+          onClick={handleSettingsToggle}
+          style={{
+            ...quickActionButtonStyle,
+            color: isInSettings ? token.colorError : token.colorText,
+          }}
+        >
+          <Settings size={14} />
+          <span style={actionLabelStyle}>{isInSettings ? t('settings.closeSettings') : t('settings.openSettings')}</span>
+          <span style={actionMetaStyle}>{formatShortcutForDisplay(getShortcutBinding(settings, 'openSettings'))}</span>
+        </Button>
+      </div>
 
-      <Button
-        type="text"
-        block
-        onClick={handleSettingsToggle}
-        style={{ justifyContent: 'space-between', paddingInline: 8, marginBottom: 8 }}
-      >
-        <span>{isInSettings ? t('settings.closeSettings') : t('settings.openSettings')}</span>
-        <span style={{ color: token.colorTextTertiary, fontSize: 11 }}>
-          {formatShortcutForDisplay(getShortcutBinding(settings, 'openSettings'))}
-        </span>
-      </Button>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <Tooltip title={t('desktop.alwaysOnTop')}>
-          <Button type="text" icon={pinned ? <Pin size={14} /> : <PinOff size={14} />} style={{ ...quickActionButtonStyle, color: pinned ? token.colorPrimary : token.colorTextSecondary }} onClick={handlePinToggle} />
+          <Button
+            type="text"
+            style={{
+              ...quickActionButtonStyle,
+              color: pinned ? token.colorPrimary : token.colorTextSecondary,
+            }}
+            onClick={handlePinToggle}
+          >
+            {pinned ? <Pin size={14} /> : <PinOff size={14} />}
+            <span style={actionLabelStyle}>{t('desktop.alwaysOnTop')}</span>
+            <span style={actionMetaStyle}>{pinned ? 'ON' : 'OFF'}</span>
+          </Button>
         </Tooltip>
 
         <Dropdown menu={{ items: themeMenuItems, onClick: handleThemeChange, selectedKeys: [themeMode] }} trigger={['click']} placement="topLeft" destroyOnHidden>
-          <Button type="text" icon={THEME_ICONS[themeMode] ?? <Monitor size={14} />} style={quickActionButtonStyle} />
+          <Button type="text" style={quickActionButtonStyle}>
+            {THEME_ICONS[themeMode] ?? <Monitor size={14} />}
+            <span style={actionLabelStyle}>{t('settings.theme')}</span>
+            <span style={actionMetaStyle}>
+              {themeMode === 'dark' ? t('settings.themeDark') : themeMode === 'light' ? t('settings.themeLight') : t('settings.themeSystem')}
+            </span>
+          </Button>
         </Dropdown>
 
         <Dropdown menu={{ items: langMenuItems, onClick: handleLangChange, selectedKeys: [i18n.language] }} trigger={['click']} placement="topLeft" destroyOnHidden>
-          <Button type="text" icon={<Globe size={14} />} style={quickActionButtonStyle} />
+          <Button type="text" style={quickActionButtonStyle}>
+            <Globe size={14} />
+            <span style={actionLabelStyle}>{t('settings.language')}</span>
+            <span style={actionMetaStyle}>{LANG_OPTIONS.find((opt) => opt.key === i18n.language)?.label ?? i18n.language}</span>
+          </Button>
         </Dropdown>
+      </div>
 
+      <Divider style={{ margin: 0 }} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <Popover open={backupPopoverOpen} onOpenChange={setBackupPopoverOpen} trigger="click" placement="topLeft" destroyTooltipOnHide content={backupContent}>
           <Button
             type="text"
-            icon={<CloudUpload size={14} />}
             style={{
               ...quickActionButtonStyle,
-              width: countdownText ? 'auto' : 32,
-              paddingInline: countdownText ? 8 : 0,
               color: countdownText ? token.colorPrimary : token.colorTextSecondary,
             }}
           >
-            {countdownText ? <span style={{ fontSize: 11 }}>{countdownText}</span> : null}
+            <CloudUpload size={14} />
+            <span style={actionLabelStyle}>{t('titlebar.quickBackup')}</span>
+            <span style={actionMetaStyle}>{countdownText ?? t('titlebar.noBackupYet')}</span>
           </Button>
         </Popover>
 
+        <Button type="text" style={quickActionButtonStyle} onClick={handleReload}>
+          <RotateCcw size={14} />
+          <span style={actionLabelStyle}>{t('desktop.reloadPage')}</span>
+          <span style={actionMetaStyle}>Ctrl+R</span>
+        </Button>
+
         <Dropdown menu={{ items: githubMenuItems, onClick: handleGithubClick }} trigger={['click']} placement="topLeft" destroyOnHidden>
-          <Button type="text" icon={<Github size={14} />} style={quickActionButtonStyle} />
+          <Button type="text" style={quickActionButtonStyle}>
+            <Github size={14} />
+            <span style={actionLabelStyle}>GitHub</span>
+            <span style={actionMetaStyle}>{t('titlebar.submitFeature')}</span>
+          </Button>
         </Dropdown>
-
-        <Tooltip title={t('desktop.reloadPage')}>
-          <Button type="text" icon={<RotateCcw size={14} />} style={quickActionButtonStyle} onClick={handleReload} />
-        </Tooltip>
-
-        <Tooltip title={`${isInSettings ? t('settings.closeSettings') : t('settings.openSettings')} (${formatShortcutForDisplay(getShortcutBinding(settings, 'openSettings'))})`}>
-          <Button type="text" icon={<Settings size={14} />} style={{ ...quickActionButtonStyle, color: isInSettings ? token.colorError : token.colorTextSecondary }} onClick={handleSettingsToggle} />
-        </Tooltip>
       </div>
     </div>
   );

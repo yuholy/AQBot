@@ -1,13 +1,13 @@
-import { useCallback, useRef, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { theme } from 'antd';
-import { Minus, X, Square } from 'lucide-react';
+import { Minus, PanelTop, Square, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { isTauri, invoke } from '@/lib/invoke';
+import { useUIStore } from '@/stores';
 import appLogo from '@/assets/image/logo.png';
 
 const IS_WINDOWS = navigator.userAgent.includes('Windows');
-const TITLE_MENU_ITEMS = ['文件', '编辑', '查看', '窗口', '帮助'];
 
-/** Standard Windows "restore down" icon: two overlapping rectangles */
 const RestoreIcon = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
     <rect x="3" y="5" width="8" height="7" rx="0.5" />
@@ -16,8 +16,11 @@ const RestoreIcon = () => (
 );
 
 export function TitleBar() {
+  const { t } = useTranslation();
   const { token } = theme.useToken();
-  // Windows window controls
+  const activePage = useUIStore((s) => s.activePage);
+  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -47,7 +50,6 @@ export function TitleBar() {
     await getCurrentWindow().close();
   }, []);
 
-  // Pre-load Tauri window module for synchronous drag calls
   const tauriWindowRef = useRef<typeof import('@tauri-apps/api/window') | null>(null);
   useEffect(() => {
     if (isTauri()) {
@@ -67,9 +69,6 @@ export function TitleBar() {
     e.preventDefault();
 
     if (IS_WINDOWS) {
-      // Delay startDragging slightly so double-click can be detected.
-      // If a second mousedown arrives within the threshold,
-      // the onDoubleClick handler fires and cancels the pending drag.
       if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
       dragTimerRef.current = setTimeout(() => {
         mod.getCurrentWindow().startDragging();
@@ -106,99 +105,138 @@ export function TitleBar() {
         flexShrink: 0,
       }}
     >
-      {/* Left: App icon + name (Windows only) */}
       {IS_WINDOWS ? (
-        <div className="title-bar-nodrag" style={{ display: 'flex', alignItems: 'center', gap: 18, marginRight: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="title-bar-nodrag" style={{ display: 'flex', alignItems: 'center', gap: 0, marginRight: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 80 }}>
             <img src={appLogo} alt="AQBot" style={{ width: 18, height: 18 }} draggable={false} />
             <span style={{ fontSize: 13, fontWeight: 600, color: token.colorTextBase, userSelect: 'none' }}>AQBot</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-            {TITLE_MENU_ITEMS.map((item) => (
-              <span
-                key={item}
-                style={{
-                  color: token.colorTextSecondary,
-                  fontSize: 13,
-                  lineHeight: '36px',
-                  userSelect: 'none',
-                }}
-              >
-                {item}
-              </span>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div
+              style={{
+                width: 30,
+                height: 28,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              {activePage === 'chat' ? (
+                <button
+                  type="button"
+                  onClick={toggleSidebar}
+                  aria-label={sidebarCollapsed ? t('common.expand') : t('common.collapse')}
+                  style={{
+                    width: 30,
+                    height: 28,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 0,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: 8,
+                    background: token.colorBgContainer,
+                    color: token.colorTextSecondary,
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = token.colorFillTertiary;
+                    e.currentTarget.style.color = token.colorTextBase;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = token.colorBgContainer;
+                    e.currentTarget.style.color = token.colorTextSecondary;
+                  }}
+                >
+                  <PanelTop size={14} style={{ transform: sidebarCollapsed ? 'rotate(90deg)' : 'rotate(-90deg)' }} />
+                </button>
+              ) : (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 30,
+                    height: 28,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: 0.18,
+                    color: token.colorTextQuaternary,
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <PanelTop size={14} style={{ transform: 'rotate(90deg)' }} />
+                </span>
+              )}
+            </div>
           </div>
         </div>
       ) : <div />}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
-
-      {/* Windows window controls */}
-      {IS_WINDOWS && isTauri() && (
-        <div className="title-bar-nodrag" style={{ display: 'flex', alignItems: 'center', marginLeft: 4 }}>
-          {/* Minimize */}
-          <button
-            onClick={handleWindowMinimize}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 46,
-              height: 36,
-              border: 'none',
-              background: 'transparent',
-              color: token.colorTextSecondary,
-              cursor: 'pointer',
-              outline: 'none',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = token.colorFillSecondary; e.currentTarget.style.color = token.colorTextBase; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = token.colorTextSecondary; }}
-          >
-            <Minus size={16} />
-          </button>
-          {/* Maximize / Restore */}
-          <button
-            onClick={handleWindowMaximize}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 46,
-              height: 36,
-              border: 'none',
-              background: 'transparent',
-              color: token.colorTextSecondary,
-              cursor: 'pointer',
-              outline: 'none',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = token.colorFillSecondary; e.currentTarget.style.color = token.colorTextBase; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = token.colorTextSecondary; }}
-          >
-            {isMaximized ? <RestoreIcon /> : <Square size={14} />}
-          </button>
-          {/* Close */}
-          <button
-            onClick={handleWindowClose}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 46,
-              height: 36,
-              border: 'none',
-              background: 'transparent',
-              color: token.colorTextSecondary,
-              cursor: 'pointer',
-              outline: 'none',
-              borderRadius: 0,
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#e81123'; e.currentTarget.style.color = '#ffffff'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = token.colorTextSecondary; }}
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
+        {IS_WINDOWS && isTauri() && (
+          <div className="title-bar-nodrag" style={{ display: 'flex', alignItems: 'center', marginLeft: 4 }}>
+            <button
+              onClick={handleWindowMinimize}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 46,
+                height: 36,
+                border: 'none',
+                background: 'transparent',
+                color: token.colorTextSecondary,
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = token.colorFillSecondary; e.currentTarget.style.color = token.colorTextBase; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = token.colorTextSecondary; }}
+            >
+              <Minus size={16} />
+            </button>
+            <button
+              onClick={handleWindowMaximize}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 46,
+                height: 36,
+                border: 'none',
+                background: 'transparent',
+                color: token.colorTextSecondary,
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = token.colorFillSecondary; e.currentTarget.style.color = token.colorTextBase; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = token.colorTextSecondary; }}
+            >
+              {isMaximized ? <RestoreIcon /> : <Square size={14} />}
+            </button>
+            <button
+              onClick={handleWindowClose}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 46,
+                height: 36,
+                border: 'none',
+                background: 'transparent',
+                color: token.colorTextSecondary,
+                cursor: 'pointer',
+                outline: 'none',
+                borderRadius: 0,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#e81123'; e.currentTarget.style.color = '#ffffff'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = token.colorTextSecondary; }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

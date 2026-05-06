@@ -583,8 +583,9 @@ pub fn run() {
                                         backup_dir_setting.as_deref(),
                                         &app_dir2,
                                     );
+                                    let db_path = app_dir2.join("aqbot.db");
                                     if let Err(e) = aqbot_core::repo::backup::create_backup(
-                                        &db2, "sqlite", &backup_dir,
+                                        &db2, "zip", &backup_dir, &app_dir2, &db_path,
                                     ).await {
                                         tracing::warn!("Auto-backup failed: {}", e);
                                     } else {

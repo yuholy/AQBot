@@ -4,8 +4,10 @@ use std::path::{Path, PathBuf};
 
 use crate::entity::backup_manifests;
 use crate::error::{AQBotError, Result};
+use crate::storage_paths;
 use crate::types::BackupManifest;
 use crate::utils::gen_id;
+use crate::webdav;
 
 fn model_to_manifest(m: backup_manifests::Model) -> BackupManifest {
     BackupManifest {
@@ -24,14 +26,15 @@ fn model_to_manifest(m: backup_manifests::Model) -> BackupManifest {
     }
 }
 
-/// Get the backup directory, using the configured path or defaulting to the AQBot home backups dir.
-pub fn resolve_backup_dir(backup_dir_setting: Option<&str>, app_data_dir: &Path) -> PathBuf {
+/// Get the backup directory, using the configured path or defaulting to the
+/// user-visible documents backups directory.
+pub fn resolve_backup_dir(backup_dir_setting: Option<&str>, _app_data_dir: &Path) -> PathBuf {
     if let Some(dir) = backup_dir_setting {
         if !dir.is_empty() {
             return PathBuf::from(dir);
         }
     }
-    app_data_dir.join("backups")
+    storage_paths::documents_root().join("backups")
 }
 
 /// Ensure the backup directory exists
@@ -45,24 +48,27 @@ pub async fn create_backup(
     db: &DatabaseConnection,
     format: &str,
     backup_dir: &Path,
+    app_data_dir: &Path,
+    current_db_path: &Path,
 ) -> Result<BackupManifest> {
     ensure_backup_dir(backup_dir)?;
 
     let id = gen_id();
-    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let extension = match format {
-        "sqlite" => "db",
-        _ => "json",
+    let filename = match format {
+        "json" => {
+            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+            format!("aqbot-backup-{}.json", timestamp)
+        }
+        _ => webdav::generate_backup_filename(),
     };
-    let filename = format!("aqbot-backup-{}.{}", timestamp, extension);
     let file_path = backup_dir.join(&filename);
 
     match format {
-        "sqlite" => {
-            create_sqlite_backup(db, &file_path).await?;
+        "json" => {
+            create_json_backup(db, &file_path).await?;
         }
         _ => {
-            create_json_backup(db, &file_path).await?;
+            create_full_zip_backup(db, current_db_path, app_data_dir, &file_path).await?;
         }
     }
 
@@ -91,6 +97,46 @@ pub async fn create_backup(
     am.insert(db).await?;
 
     get_backup(db, &id).await
+}
+
+async fn create_full_zip_backup(
+    db: &DatabaseConnection,
+    _current_db_path: &Path,
+    app_data_dir: &Path,
+    dest_zip: &Path,
+) -> Result<()> {
+    let temp_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp_db_path = dest_zip
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!("_local_backup_temp_{}.db", temp_id));
+    let _ = std::fs::remove_file(&temp_db_path);
+
+    create_sqlite_backup(db, &temp_db_path).await?;
+
+    let documents_dir = storage_paths::documents_root();
+    let workspace_dir = app_data_dir.join("workspace");
+    let master_key_path = app_data_dir.join("master.key");
+    let object_counts = count_objects(db).await?;
+
+    let result = webdav::create_backup_zip(
+        &temp_db_path,
+        documents_dir.exists().then_some(documents_dir.as_path()),
+        workspace_dir.exists().then_some(workspace_dir.as_path()),
+        master_key_path.exists().then_some(master_key_path.as_path()),
+        Some(app_data_dir),
+        dest_zip,
+        env!("CARGO_PKG_VERSION"),
+        &object_counts,
+    );
+
+    let _ = std::fs::remove_file(&temp_db_path);
+    result?;
+
+    Ok(())
 }
 
 /// Create a SQLite backup using VACUUM INTO
@@ -248,14 +294,15 @@ mod tests {
     #[test]
     fn resolve_backup_dir_defaults_to_aqbot_backups_subdir() {
         let aqbot_home = PathBuf::from("/Users/test/.aqbot");
+        let expected = crate::storage_paths::default_documents_root().join("backups");
 
         assert_eq!(
             resolve_backup_dir(None, &aqbot_home),
-            aqbot_home.join("backups")
+            expected
         );
         assert_eq!(
             resolve_backup_dir(Some(""), &aqbot_home),
-            aqbot_home.join("backups")
+            expected
         );
     }
 

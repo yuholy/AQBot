@@ -156,8 +156,6 @@ interface ChatSidebarToolbarProps {
   primaryBgColor: string
   primaryBorderColor: string
   secondaryTextColor: string
-  borderColor: string
-  fillTertiaryColor: string
   newConversationTitle: string
   onCancelArchivedSelect: () => void
   onToggleArchivedSelectAll: () => void
@@ -191,8 +189,6 @@ function ChatSidebarToolbar({
   primaryBgColor,
   primaryBorderColor,
   secondaryTextColor,
-  borderColor,
-  fillTertiaryColor,
   newConversationTitle,
   onCancelArchivedSelect,
   onToggleArchivedSelectAll,
@@ -909,7 +905,7 @@ export function ChatSidebar() {
               </span>
             ),
             group,
-            className: isChild ? 'aqbot-chat-conversation-item aqbot-chat-conversation-item-child' : 'aqbot-chat-conversation-item',
+            className: isChild ? `aqbot-chat-conversation-item ${group.startsWith('cat:') ? 'aqbot-chat-conversation-item-in-category ' : ''}aqbot-chat-conversation-item-child` : `aqbot-chat-conversation-item${group.startsWith('cat:') ? ' aqbot-chat-conversation-item-in-category' : ''}`,
             'data-conv-id': conv.id,
             ...(isChild ? { style: { paddingLeft: 28 } } : {}),
           }
@@ -919,7 +915,7 @@ export function ChatSidebar() {
           label,
           icon,
           group,
-          className: isChild ? 'aqbot-chat-conversation-item aqbot-chat-conversation-item-child' : 'aqbot-chat-conversation-item',
+          className: isChild ? `aqbot-chat-conversation-item ${group.startsWith('cat:') ? 'aqbot-chat-conversation-item-in-category ' : ''}aqbot-chat-conversation-item-child` : `aqbot-chat-conversation-item${group.startsWith('cat:') ? ' aqbot-chat-conversation-item-in-category' : ''}`,
           'data-conv-id': conv.id,
           ...(isChild ? { style: { paddingLeft: 28 } } : {}),
         }
@@ -1423,7 +1419,7 @@ export function ChatSidebar() {
           scrollbar-gutter: stable;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-title {
-          margin-bottom: 2px;
+          margin-bottom: 4px;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-title:not(.ant-conversations-group-title-collapsible) {
           min-height: 24px;
@@ -1445,14 +1441,16 @@ export function ChatSidebar() {
           background: transparent;
           border: 0;
           border-radius: 8px;
+          margin-top: 6px;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-title-collapsible:hover {
           background: var(--aqbot-sidebar-hover-bg);
         }
         .aqbot-chat-category-label {
           color: var(--aqbot-sidebar-text-heading);
-          font-size: 13px;
-          font-weight: 560;
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 0.01em;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-group-collapse-trigger {
           color: var(--aqbot-sidebar-text-tertiary);
@@ -1460,6 +1458,8 @@ export function ChatSidebar() {
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item {
           color: ${token.colorTextSecondary};
+          margin-inline: 8px 8px;
+          border-radius: 8px;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-item:hover {
           background: var(--aqbot-sidebar-soft-bg);
@@ -1473,8 +1473,17 @@ export function ChatSidebar() {
           font-weight: 600;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-label {
-          font-size: 13px;
+          font-size: 12px;
           line-height: 1.3;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .aqbot-chat-conversation-item-in-category {
+          margin-left: 18px;
+          width: calc(100% - 26px);
+          border-left: 1px solid color-mix(in srgb, var(--aqbot-sidebar-border) 72%, transparent);
+          border-radius: 0 8px 8px 0;
+        }
+        .aqbot-chat-sidebar .aqbot-chat-conversations .aqbot-chat-conversation-item-in-category .ant-conversations-icon {
+          min-width: 20px;
         }
         .aqbot-chat-sidebar .aqbot-chat-conversations .ant-conversations-icon {
           display: flex;
@@ -1531,8 +1540,6 @@ export function ChatSidebar() {
         primaryBgColor={token.colorPrimaryBg}
         primaryBorderColor={token.colorPrimaryBorder}
         secondaryTextColor={token.colorTextSecondary}
-        borderColor={token.colorBorderSecondary}
-        fillTertiaryColor={token.colorFillTertiary}
         newConversationTitle={shortcutHint(t('chat.newConversation'), 'newConversation')}
         onCancelArchivedSelect={() => { setArchivedMultiSelect(false); setArchivedSelectedIds(new Set()) }}
         onToggleArchivedSelectAll={() => { void handleSelectAllArchived() }}

@@ -15,5 +15,16 @@ export function useCommandPalette() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  useEffect(() => {
+    const openHandler = () => setOpen(true);
+    const toggleHandler = () => setOpen((prev) => !prev);
+    window.addEventListener('aqbot:open-command-palette', openHandler);
+    window.addEventListener('aqbot:toggle-command-palette', toggleHandler);
+    return () => {
+      window.removeEventListener('aqbot:open-command-palette', openHandler);
+      window.removeEventListener('aqbot:toggle-command-palette', toggleHandler);
+    };
+  }, []);
+
   return { open, setOpen };
 }

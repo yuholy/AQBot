@@ -137,7 +137,7 @@ export default function BackupCenter() {
       key: 'version',
       width: 100,
       render: (val: string) => (
-        <Tag icon={val === 'sqlite' ? <HardDrive size={12} /> : <FileJson size={12} />}>
+        <Tag icon={val === 'json' ? <FileJson size={12} /> : <HardDrive size={12} />}>
           {val.toUpperCase()}
         </Tag>
       ),
@@ -175,7 +175,7 @@ export default function BackupCenter() {
       width: 160,
       render: (_: unknown, record: BackupManifest) => (
         <Space size="small">
-          {record.version === 'sqlite' && (
+          {record.version !== 'json' && (
             <Tooltip title={t('backup.restore')}>
               <Button
                 size="small"
@@ -290,11 +290,11 @@ export default function BackupCenter() {
         confirmLoading={loading}
         mask={{ enabled: true, blur: true }}
       >
-        <Form form={form} layout="vertical" initialValues={{ format: 'sqlite' }}>
+        <Form form={form} layout="vertical" initialValues={{ format: 'zip' }}>
           <Form.Item name="format" label={t('backup.format')}>
             <Select
               options={[
-                { label: 'SQLite (' + t('backup.formatSqliteDesc') + ')', value: 'sqlite' },
+                { label: 'ZIP (' + t('backup.formatZipDesc') + ')', value: 'zip' },
                 { label: 'JSON (' + t('backup.formatJsonDesc') + ')', value: 'json' },
               ]}
             />

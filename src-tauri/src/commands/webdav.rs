@@ -385,6 +385,7 @@ async fn do_webdav_backup_once(
         documents_dir.as_deref(),
         workspace_dir.as_deref(),
         Some(&master_key_path),
+        Some(app_data_dir),
         &zip_path,
         env!("CARGO_PKG_VERSION"),
         &object_counts,

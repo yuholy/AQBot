@@ -942,6 +942,7 @@
     "defaultDir": "AQBot 默认备份目录",
     "effectiveDir": "当前生效目录",
     "formatSqliteDesc": "快速，可直接恢复",
+    "formatZipDesc": "完整打包，可恢复数据库、密钥和文件",
     "formatJsonDesc": "可读性好，体积较大",
     "localBackup": "本地备份",
     "webdav": {

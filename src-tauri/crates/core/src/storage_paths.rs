@@ -66,6 +66,22 @@ pub fn resolve_documents_path(relative_path: &str) -> PathBuf {
     documents_root().join(relative_path)
 }
 
+/// Converts a path under documents root to a database-safe relative path.
+/// Relative paths are normalized and returned as-is; absolute paths outside
+/// documents root return `None`.
+pub fn documents_relative_path(path: &Path) -> Option<String> {
+    if path.is_relative() {
+        let rel = path.to_string_lossy().replace('\\', "/");
+        return validate_relative_path(&rel).is_ok().then_some(rel);
+    }
+
+    let root = documents_root();
+    path.strip_prefix(&root).ok().and_then(|rel| {
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        validate_relative_path(&rel).is_ok().then_some(rel)
+    })
+}
+
 /// Generates a storage-ready relative path for a new file.
 /// Format: "{bucket}/{hash_prefix}_{sanitized_name}"
 pub fn build_relative_path(original_name: &str, mime_type: &str, hash: &str) -> String {
@@ -213,6 +229,28 @@ mod tests {
         let resolved = resolve_documents_path("readme.txt");
         let root = documents_root();
         assert_eq!(resolved, root.join("readme.txt"));
+    }
+
+    #[test]
+    fn documents_relative_path_accepts_documents_child() {
+        let root = documents_root();
+        let path = root.join("backups").join("aqbot-backup.zip");
+
+        assert_eq!(
+            documents_relative_path(&path),
+            Some("backups/aqbot-backup.zip".to_string())
+        );
+    }
+
+    #[test]
+    fn documents_relative_path_rejects_external_absolute_path() {
+        let path = if cfg!(windows) {
+            PathBuf::from("C:\\external\\aqbot-backup.zip")
+        } else {
+            PathBuf::from("/external/aqbot-backup.zip")
+        };
+
+        assert_eq!(documents_relative_path(&path), None);
     }
 
     // -- build_relative_path tests --

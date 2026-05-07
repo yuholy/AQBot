@@ -21,8 +21,26 @@ fn model_to_manifest(m: backup_manifests::Model) -> BackupManifest {
         file_path: m
             .file_path
             .as_ref()
-            .map(|p| crate::path_vars::decode_path(p)),
+            .map(|p| resolve_stored_backup_path(p).to_string_lossy().to_string()),
         file_size: m.file_size,
+    }
+}
+
+fn backup_storage_path(path: &Path) -> String {
+    if let Some(relative) = storage_paths::documents_relative_path(path) {
+        return relative;
+    }
+
+    crate::path_vars::encode_path(&path.to_string_lossy())
+}
+
+fn resolve_stored_backup_path(path: &str) -> PathBuf {
+    let decoded = crate::path_vars::decode_path(path);
+    let path = PathBuf::from(decoded);
+    if path.is_absolute() {
+        path
+    } else {
+        storage_paths::resolve_documents_path(&path.to_string_lossy())
     }
 }
 
@@ -87,9 +105,7 @@ pub async fn create_backup(
         checksum: Set(checksum),
         object_counts_json: Set(object_counts),
         source_app_version: Set(env!("CARGO_PKG_VERSION").to_string()),
-        file_path: Set(Some(crate::path_vars::encode_path(
-            &file_path.to_string_lossy(),
-        ))),
+        file_path: Set(Some(backup_storage_path(&file_path))),
         file_size: Set(file_size),
         ..Default::default()
     };

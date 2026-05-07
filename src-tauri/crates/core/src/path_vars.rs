@@ -164,10 +164,23 @@ async fn migrate_backup_manifest_paths(db: &sea_orm::DatabaseConnection) {
     for m in manifests {
         if let Some(ref fp) = m.file_path {
             if !fp.is_empty() && !fp.contains("{{") {
-                let encoded = encode_path(fp);
+                let path = std::path::Path::new(fp);
+                let encoded = crate::storage_paths::documents_relative_path(path)
+                    .unwrap_or_else(|| encode_path(fp));
                 if encoded != *fp {
                     let mut am: backup_manifests::ActiveModel = m.into();
                     am.file_path = Set(Some(encoded));
+                    if let Err(e) = am.update(db).await {
+                        tracing::warn!("path_vars: failed to migrate backup manifest path: {}", e);
+                    }
+                }
+            } else if !fp.is_empty() && fp.starts_with(VAR_DOCUMENTS) {
+                let decoded = decode_path(fp);
+                if let Some(relative) =
+                    crate::storage_paths::documents_relative_path(std::path::Path::new(&decoded))
+                {
+                    let mut am: backup_manifests::ActiveModel = m.into();
+                    am.file_path = Set(Some(relative));
                     if let Err(e) = am.update(db).await {
                         tracing::warn!("path_vars: failed to migrate backup manifest path: {}", e);
                     }

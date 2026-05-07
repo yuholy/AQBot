@@ -64,6 +64,7 @@ export default function WebDavSync() {
   });
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [configForm] = Form.useForm();
+  const syncMode = Form.useWatch('syncMode', configForm) || 'fast';
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(
@@ -151,7 +152,9 @@ export default function WebDavSync() {
         webdav_sync_enabled: values.syncEnabled || false,
         webdav_sync_interval_minutes: values.syncIntervalMinutes || 60,
         webdav_max_remote_backups: values.maxRemoteBackups || 10,
+        webdav_sync_mode: values.syncMode || 'fast',
         webdav_include_documents: values.includeDocuments || false,
+        webdav_include_workspace: values.includeWorkspace || false,
       });
 
       // Restart sync scheduler
@@ -358,8 +361,12 @@ export default function WebDavSync() {
                   settings?.webdav_sync_interval_minutes || 60,
                 maxRemoteBackups:
                   settings?.webdav_max_remote_backups || 10,
+                syncMode:
+                  settings?.webdav_sync_mode || 'fast',
                 includeDocuments:
                   settings?.webdav_include_documents || false,
+                includeWorkspace:
+                  settings?.webdav_include_workspace || false,
               });
               setTestResult(null);
               setConfigModalOpen(true);
@@ -544,9 +551,32 @@ export default function WebDavSync() {
               />
             </Form.Item>
           </div>
+          <Form.Item
+            name="syncMode"
+            label={t('backup.webdav.syncMode', 'Sync mode')}
+            initialValue="fast"
+          >
+            <Select
+              options={[
+                {
+                  label: t('backup.webdav.syncModeFast', 'Fast sync'),
+                  value: 'fast',
+                },
+                {
+                  label: t('backup.webdav.syncModeFull', 'Full sync'),
+                  value: 'full',
+                },
+              ]}
+            />
+          </Form.Item>
           <Form.Item name="includeDocuments" valuePropName="checked">
-            <Checkbox>
+            <Checkbox disabled={syncMode !== 'full'}>
               {t('backup.webdav.includeDocuments')}
+            </Checkbox>
+          </Form.Item>
+          <Form.Item name="includeWorkspace" valuePropName="checked">
+            <Checkbox disabled={syncMode !== 'full'}>
+              {t('backup.webdav.includeWorkspace', 'Include workspace')}
             </Checkbox>
           </Form.Item>
         </Form>

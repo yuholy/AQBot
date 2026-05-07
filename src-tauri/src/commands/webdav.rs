@@ -360,8 +360,11 @@ async fn do_webdav_backup_once(
     // 3. Object counts for metadata
     let object_counts = count_objects_json(db).await;
 
-    // 4. Documents directory (optional)
-    let include_docs = settings.webdav_include_documents;
+    let sync_mode = settings.webdav_sync_mode.as_str();
+    let is_full_sync = sync_mode == "full";
+
+    // 4. Documents directory (optional, full sync only)
+    let include_docs = is_full_sync && settings.webdav_include_documents;
     let documents_dir = if include_docs {
         let docs_root = webdav::documents_sync_root();
         if docs_root.exists() {
@@ -373,10 +376,21 @@ async fn do_webdav_backup_once(
         None
     };
 
-    // 4b. Workspace directory (always included if present)
-    let workspace_root = crate::paths::aqbot_home().join("workspace");
-    let workspace_dir = if workspace_root.exists() {
-        Some(workspace_root)
+    // 4b. Workspace directory (optional, full sync only)
+    let include_workspace = is_full_sync && settings.webdav_include_workspace;
+    let workspace_dir = if include_workspace {
+        let workspace_root = crate::paths::aqbot_home().join("workspace");
+        if workspace_root.exists() {
+            Some(workspace_root)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let aqbot_home_dir = if is_full_sync {
+        Some(app_data_dir)
     } else {
         None
     };
@@ -390,7 +404,7 @@ async fn do_webdav_backup_once(
         documents_dir.as_deref(),
         workspace_dir.as_deref(),
         Some(&master_key_path),
-        Some(app_data_dir),
+        aqbot_home_dir,
         &zip_path,
         env!("CARGO_PKG_VERSION"),
         &object_counts,

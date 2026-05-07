@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::future::Future;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 
 use crate::error::{AQBotError, Result};
@@ -293,6 +293,7 @@ pub fn create_backup_zip(
         .map_err(|e| AQBotError::Gateway(format!("Failed to create ZIP file: {}", e)))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let common_excludes = vec![dest_zip.to_path_buf()];
 
     // aqbot.db
     let db_data = std::fs::read(db_path)
@@ -343,14 +344,16 @@ pub fn create_backup_zip(
     // Optional: documents/ directory
     if let Some(docs_dir) = documents_dir {
         if docs_dir.exists() {
-            add_directory_to_zip(&mut zip, docs_dir, "documents", options)?;
+            let mut docs_excludes = common_excludes.clone();
+            docs_excludes.push(docs_dir.join("backups"));
+            add_directory_to_zip(&mut zip, docs_dir, "documents", options, &docs_excludes)?;
         }
     }
 
     // Optional: workspace/ directory
     if let Some(ws_dir) = workspace_dir {
         if ws_dir.exists() {
-            add_directory_to_zip(&mut zip, ws_dir, "workspace", options)?;
+            add_directory_to_zip(&mut zip, ws_dir, "workspace", options, &common_excludes)?;
         }
     }
 
@@ -358,17 +361,35 @@ pub fn create_backup_zip(
     if let Some(home_dir) = aqbot_home_dir {
         let skills_dir = home_dir.join("skills");
         if skills_dir.exists() {
-            add_directory_to_zip(&mut zip, &skills_dir, "aqbot_home/skills", options)?;
+            add_directory_to_zip(
+                &mut zip,
+                &skills_dir,
+                "aqbot_home/skills",
+                options,
+                &common_excludes,
+            )?;
         }
 
         let vector_db_dir = home_dir.join("vector_db");
         if vector_db_dir.exists() {
-            add_directory_to_zip(&mut zip, &vector_db_dir, "aqbot_home/vector_db", options)?;
+            add_directory_to_zip(
+                &mut zip,
+                &vector_db_dir,
+                "aqbot_home/vector_db",
+                options,
+                &common_excludes,
+            )?;
         }
 
         let ssl_dir = home_dir.join("ssl");
         if ssl_dir.exists() {
-            add_directory_to_zip(&mut zip, &ssl_dir, "aqbot_home/ssl", options)?;
+            add_directory_to_zip(
+                &mut zip,
+                &ssl_dir,
+                "aqbot_home/ssl",
+                options,
+                &common_excludes,
+            )?;
         }
     }
 
@@ -562,9 +583,10 @@ fn add_directory_to_zip<W: Write + std::io::Seek>(
     dir: &Path,
     prefix: &str,
     options: SimpleFileOptions,
+    excluded_paths: &[PathBuf],
 ) -> Result<()> {
     let mut files = Vec::new();
-    collect_files(dir, &mut files)?;
+    collect_files(dir, &mut files, excluded_paths)?;
 
     for file_path in files {
         let rel = file_path
@@ -582,7 +604,7 @@ fn add_directory_to_zip<W: Write + std::io::Seek>(
     Ok(())
 }
 
-fn collect_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> Result<()> {
+fn collect_files(dir: &Path, files: &mut Vec<std::path::PathBuf>, excluded_paths: &[PathBuf]) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -591,13 +613,22 @@ fn collect_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> Result<()> 
     {
         let entry = entry.map_err(|e| AQBotError::Gateway(format!("Dir entry error: {}", e)))?;
         let path = entry.path();
+        if should_skip_path(&path, excluded_paths) {
+            continue;
+        }
         if path.is_dir() {
-            collect_files(&path, files)?;
+            collect_files(&path, files, excluded_paths)?;
         } else {
             files.push(path);
         }
     }
     Ok(())
+}
+
+fn should_skip_path(path: &Path, excluded_paths: &[PathBuf]) -> bool {
+    excluded_paths
+        .iter()
+        .any(|excluded| path == excluded || path.starts_with(excluded))
 }
 
 /// Parse WebDAV PROPFIND XML response to extract file information.
@@ -784,6 +815,36 @@ mod tests {
         assert!(
             chrono::DateTime::parse_from_rfc3339(&timestamp).is_ok(),
             "sync status timestamps should be RFC3339 so the frontend can render them directly, got: {timestamp}"
+        );
+    }
+
+    #[test]
+    fn create_backup_zip_skips_nested_backups_and_output_zip() {
+        let temp = tempfile::tempdir().unwrap();
+        let docs_dir = temp.path().join("documents");
+        let backups_dir = docs_dir.join("backups");
+        std::fs::create_dir_all(&backups_dir).unwrap();
+        std::fs::write(docs_dir.join("keep.txt"), b"keep").unwrap();
+        std::fs::write(backups_dir.join("old-backup.zip"), b"old").unwrap();
+
+        let db_path = temp.path().join("aqbot.db");
+        std::fs::write(&db_path, b"db").unwrap();
+
+        let dest_zip = backups_dir.join("new-backup.zip");
+        create_backup_zip(&db_path, Some(&docs_dir), None, None, None, &dest_zip, "test", "{}")
+            .unwrap();
+
+        let file = std::fs::File::open(&dest_zip).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut names = Vec::new();
+        for i in 0..archive.len() {
+            names.push(archive.by_index(i).unwrap().name().to_string());
+        }
+
+        assert!(names.iter().any(|name| name == "documents/keep.txt"));
+        assert!(
+            names.iter().all(|name| !name.starts_with("documents/backups/")),
+            "backup archives should not include nested backups: {names:?}"
         );
     }
 }

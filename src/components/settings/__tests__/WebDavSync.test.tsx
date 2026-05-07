@@ -14,7 +14,9 @@ const settingsStoreState = {
     webdav_sync_enabled: false,
     webdav_sync_interval_minutes: 60,
     webdav_max_remote_backups: 10,
+    webdav_sync_mode: 'fast',
     webdav_include_documents: false,
+    webdav_include_workspace: false,
   },
   saveSettings: saveSettingsMock,
 };
@@ -40,7 +42,9 @@ describe('WebDavSync', () => {
       webdav_sync_enabled: false,
       webdav_sync_interval_minutes: 60,
       webdav_max_remote_backups: 10,
+      webdav_sync_mode: 'fast',
       webdav_include_documents: false,
+      webdav_include_workspace: false,
     };
 
     invokeMock.mockImplementation(async (command: string) => {
@@ -107,7 +111,9 @@ describe('WebDavSync', () => {
           webdav_sync_enabled: false,
           webdav_sync_interval_minutes: 60,
           webdav_max_remote_backups: 10,
+          webdav_sync_mode: 'fast',
           webdav_include_documents: false,
+          webdav_include_workspace: false,
         }),
       );
     });

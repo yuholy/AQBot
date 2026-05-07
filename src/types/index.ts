@@ -445,7 +445,9 @@ export interface AppSettings {
   webdav_sync_enabled?: boolean;
   webdav_sync_interval_minutes?: number;
   webdav_max_remote_backups?: number;
+  webdav_sync_mode?: 'fast' | 'full';
   webdav_include_documents?: boolean;
+  webdav_include_workspace?: boolean;
   last_selected_conversation_id?: string | null;
   /** Custom documents root override (overrides ~/Documents/aqbot/) */
   documents_root_override?: string | null;

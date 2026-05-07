@@ -74,6 +74,7 @@ export default function WebDavSync() {
   const [remoteBackups, setRemoteBackups] = useState<WebDavFileInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
   const [selectedFileNames, setSelectedFileNames] = useState<string[]>([]);
@@ -209,6 +210,7 @@ export default function WebDavSync() {
 
   const handleRestore = async () => {
     if (!restoreTarget) return;
+    setRestoring(true);
     try {
       await invoke('webdav_restore', { fileName: restoreTarget });
       setRestoreTarget(null);
@@ -224,6 +226,8 @@ export default function WebDavSync() {
       });
     } catch (e) {
       message.error(String(e));
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -587,8 +591,15 @@ export default function WebDavSync() {
         title={t('backup.restore')}
         open={!!restoreTarget}
         onOk={handleRestore}
-        onCancel={() => setRestoreTarget(null)}
-        okButtonProps={{ danger: true }}
+        onCancel={() => {
+          if (!restoring) setRestoreTarget(null);
+        }}
+        okButtonProps={{ danger: true, loading: restoring }}
+        cancelButtonProps={{ disabled: restoring }}
+        closable={!restoring}
+        maskClosable={!restoring}
+        keyboard={!restoring}
+        confirmLoading={restoring}
         mask={{ enabled: true, blur: true }}
       >
         <Text type="warning">{t('backup.restoreWarning')}</Text>

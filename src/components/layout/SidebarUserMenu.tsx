@@ -29,6 +29,7 @@ export function SidebarUserMenu() {
   const { token } = theme.useToken();
   const { modal, message } = App.useApp();
   const profile = useUserProfileStore((s) => s.profile);
+  const loadProfile = useUserProfileStore((s) => s.loadProfile);
   const resolvedAvatarSrc = useResolvedAvatarSrc(profile.avatarType, profile.avatarValue);
   const activePage = useUIStore((s) => s.activePage);
   const enterSettings = useUIStore((s) => s.enterSettings);
@@ -51,6 +52,10 @@ export function SidebarUserMenu() {
   const [popoverLocalCountdown, setPopoverLocalCountdown] = useState<string | null>(null);
   const [popoverWebDavCountdown, setPopoverWebDavCountdown] = useState<string | null>(null);
   const { backupSettings, loadBackupSettings } = useBackupStore();
+
+  useEffect(() => {
+    loadProfile().catch(() => {});
+  }, [loadProfile]);
 
   useEffect(() => {
     setPinned(alwaysOnTop ?? false);

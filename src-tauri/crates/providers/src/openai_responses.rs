@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::pin::Pin;
 
 use crate::reasoning::{resolve_reasoning, ReasoningStyle};
@@ -209,22 +210,20 @@ fn convert_content_to_value(content: &ChatContent) -> serde_json::Value {
         ChatContent::Multipart(parts) => serde_json::Value::Array(
             parts
                 .iter()
-                .map(|part| {
-                    let mut value = serde_json::Map::new();
-                    value.insert(
-                        "type".to_string(),
-                        serde_json::Value::String(part.r#type.clone()),
-                    );
-                    if let Some(text) = &part.text {
-                        value.insert("text".to_string(), serde_json::Value::String(text.clone()));
+                .filter_map(|part| {
+                    if part.r#type == "image_url" {
+                        let image_url = part.image_url.as_ref()?;
+                        return Some(json!({
+                            "type": "input_image",
+                            "image_url": image_url.url,
+                        }));
                     }
-                    if let Some(image_url) = &part.image_url {
-                        value.insert(
-                            "image_url".to_string(),
-                            serde_json::to_value(image_url).unwrap_or(serde_json::Value::Null),
-                        );
-                    }
-                    serde_json::Value::Object(value)
+
+                    let text = part.text.as_ref()?;
+                    Some(json!({
+                        "type": "input_text",
+                        "text": text,
+                    }))
                 })
                 .collect(),
         ),
@@ -1090,6 +1089,41 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["role"], "user");
         assert_eq!(arr[0]["content"], "Hello");
+    }
+
+    #[test]
+    fn multipart_images_convert_to_responses_content_parts() {
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: ChatContent::Multipart(vec![
+                ContentPart {
+                    r#type: "text".to_string(),
+                    text: Some("Describe this image".to_string()),
+                    image_url: None,
+                },
+                ContentPart {
+                    r#type: "image_url".to_string(),
+                    text: None,
+                    image_url: Some(ImageUrl {
+                        url: "data:image/png;base64,YWJj".to_string(),
+                    }),
+                },
+            ]),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let (input, _) = build_responses_input(&messages);
+        let arr = input.as_array().unwrap();
+
+        assert_eq!(
+            arr[0]["content"],
+            json!([
+                { "type": "input_text", "text": "Describe this image" },
+                { "type": "input_image", "image_url": "data:image/png;base64,YWJj" }
+            ])
+        );
     }
 
     #[test]

@@ -364,6 +364,7 @@ fn strip_display_tags(content: &str) -> String {
 fn build_message_content(
     file_store: &aqbot_core::file_store::FileStore,
     message: &Message,
+    include_images: bool,
 ) -> aqbot_core::error::Result<ChatContent> {
     // Strip display-only tags from assistant messages
     let content = if message.role == MessageRole::Assistant {
@@ -378,7 +379,7 @@ fn build_message_content(
         .filter(|attachment| attachment.file_type.starts_with("image/"))
         .collect::<Vec<_>>();
 
-    if image_attachments.is_empty() {
+    if !include_images || image_attachments.is_empty() {
         return Ok(ChatContent::Text(content));
     }
 
@@ -428,6 +429,7 @@ fn build_message_content(
 fn chat_message_from_message(
     file_store: &aqbot_core::file_store::FileStore,
     message: &Message,
+    include_images: bool,
 ) -> aqbot_core::error::Result<ChatMessage> {
     let tool_calls: Option<Vec<ToolCall>> = message
         .tool_calls_json
@@ -442,7 +444,7 @@ fn chat_message_from_message(
             MessageRole::Tool => "tool",
         }
         .to_string(),
-        content: build_message_content(file_store, message)?,
+        content: build_message_content(file_store, message, include_images)?,
         reasoning_content: message
             .thinking
             .clone()
@@ -457,6 +459,12 @@ fn chat_message_from_message(
         tool_calls,
         tool_call_id: message.tool_call_id.clone(),
     })
+}
+
+fn model_supports_vision(model: Option<&aqbot_core::types::Model>) -> bool {
+    model
+        .map(|m| m.capabilities.contains(&ModelCapability::Vision))
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -2020,6 +2028,7 @@ pub async fn send_message(
     )
     .await
     .ok();
+    let include_images = model_supports_vision(resolved_model.as_ref());
     let model_param_overrides = resolved_model
         .as_ref()
         .and_then(|m| m.param_overrides.clone());
@@ -2150,7 +2159,7 @@ pub async fn send_message(
             continue;
         }
         history_messages
-            .push(chat_message_from_message(&file_store, m).map_err(|e| e.to_string())?);
+            .push(chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?);
     }
 
     // Resolve proxy config early (needed for both summary generation and main request)
@@ -2437,6 +2446,14 @@ pub async fn regenerate_message(
             .await
             .map_err(|e| e.to_string())?;
     let file_store = aqbot_core::file_store::FileStore::new();
+    let target_model = aqbot_core::repo::provider::get_model(
+        &state.sea_db,
+        &conversation.provider_id,
+        &conversation.model_id,
+    )
+    .await
+    .ok();
+    let include_images = model_supports_vision(target_model.as_ref());
 
     let mut chat_messages: Vec<ChatMessage> = Vec::new();
 
@@ -2528,7 +2545,7 @@ pub async fn regenerate_message(
             continue;
         }
         // Include messages up to and including the last user message
-        chat_messages.push(chat_message_from_message(&file_store, m).map_err(|e| e.to_string())?);
+        chat_messages.push(chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?);
         // Stop after the user message we're regenerating from
         if m.id == last_user_msg.id {
             break;
@@ -2589,14 +2606,7 @@ pub async fn regenerate_message(
         }
     };
 
-    let regen_model_overrides = aqbot_core::repo::provider::get_model(
-        &state.sea_db,
-        &conversation.provider_id,
-        &conversation.model_id,
-    )
-    .await
-    .ok()
-    .and_then(|m| m.param_overrides);
+    let regen_model_overrides = target_model.and_then(|m| m.param_overrides);
     let use_max_completion_tokens = regen_model_overrides
         .as_ref()
         .and_then(|p| p.use_max_completion_tokens);
@@ -2739,6 +2749,14 @@ pub async fn regenerate_with_model(
             .await
             .map_err(|e| e.to_string())?;
     let file_store = aqbot_core::file_store::FileStore::new();
+    let target_model = aqbot_core::repo::provider::get_model(
+        &state.sea_db,
+        &conversation.provider_id,
+        &conversation.model_id,
+    )
+    .await
+    .ok();
+    let include_images = model_supports_vision(target_model.as_ref());
     let mut chat_messages: Vec<ChatMessage> = Vec::new();
 
     // Resolve effective system prompt: conversation → category → global default
@@ -2836,7 +2854,7 @@ pub async fn regenerate_with_model(
         if m.status == "error" {
             continue;
         }
-        chat_messages.push(chat_message_from_message(&file_store, m).map_err(|e| e.to_string())?);
+        chat_messages.push(chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?);
         if m.id == user_msg.id {
             break;
         }
@@ -2895,14 +2913,7 @@ pub async fn regenerate_with_model(
         }
     };
 
-    let rwm_overrides = aqbot_core::repo::provider::get_model(
-        &state.sea_db,
-        &conversation.provider_id,
-        &conversation.model_id,
-    )
-    .await
-    .ok()
-    .and_then(|m| m.param_overrides);
+    let rwm_overrides = target_model.and_then(|m| m.param_overrides);
     let use_max_completion_tokens = rwm_overrides
         .as_ref()
         .and_then(|p| p.use_max_completion_tokens);
@@ -3275,7 +3286,7 @@ pub async fn compress_context(
             if m.role == MessageRole::Assistant && m.tool_calls_json.is_some() {
                 continue;
             }
-            out.push(chat_message_from_message(&file_store, m).map_err(|e| e.to_string())?);
+            out.push(chat_message_from_message(&file_store, m, false).map_err(|e| e.to_string())?);
         }
         Ok(out)
     };
@@ -3538,7 +3549,7 @@ mod tests {
             status: "complete".into(),
         };
 
-        let chat_message = chat_message_from_message(&file_store, &message).unwrap();
+        let chat_message = chat_message_from_message(&file_store, &message, true).unwrap();
         let serialized = serde_json::to_value(chat_message).unwrap();
 
         assert_eq!(serialized["content"], "final answer");
@@ -3647,7 +3658,7 @@ mod tests {
                 status: "done".into(),
             };
 
-            build_message_content(&file_store, &message).unwrap()
+            build_message_content(&file_store, &message, true).unwrap()
         })();
 
         fs::remove_dir_all(&temp_dir).unwrap();
@@ -3703,7 +3714,7 @@ mod tests {
                 status: "done".into(),
             };
 
-            build_message_content(&file_store, &message).unwrap()
+            build_message_content(&file_store, &message, true).unwrap()
         })();
 
         fs::remove_dir_all(&temp_dir).unwrap();
@@ -3716,6 +3727,55 @@ mod tests {
                 );
             }
             ChatContent::Text(_) => panic!("expected multipart content"),
+        }
+    }
+
+    #[test]
+    fn build_message_content_omits_images_when_model_has_no_vision() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("aqbot-no-vision-test-{}", aqbot_core::utils::gen_id()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let result = (|| {
+            let file_store = aqbot_core::file_store::FileStore::with_root(temp_dir.clone());
+            let message = Message {
+                id: "msg-1".into(),
+                conversation_id: "conv-1".into(),
+                role: MessageRole::User,
+                content: "Describe this image".into(),
+                provider_id: None,
+                model_id: None,
+                token_count: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                tokens_per_second: None,
+                first_token_latency_ms: None,
+                attachments: vec![Attachment {
+                    id: String::new(),
+                    file_type: "image/png".into(),
+                    file_name: "image.png".into(),
+                    file_path: String::new(),
+                    file_size: 3,
+                    data: Some("YWJj".into()),
+                }],
+                thinking: None,
+                tool_calls_json: None,
+                tool_call_id: None,
+                created_at: 0,
+                parent_message_id: None,
+                version_index: 0,
+                is_active: true,
+                status: "done".into(),
+            };
+
+            build_message_content(&file_store, &message, false).unwrap()
+        })();
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+
+        match result {
+            ChatContent::Text(text) => assert_eq!(text, "Describe this image"),
+            ChatContent::Multipart(_) => panic!("expected text-only content"),
         }
     }
 

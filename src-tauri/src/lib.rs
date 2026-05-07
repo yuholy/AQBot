@@ -267,6 +267,9 @@ pub fn run() {
             commands::webdav::webdav_delete_backup,
             commands::webdav::get_webdav_sync_status,
             commands::webdav::restart_webdav_sync,
+            // user profile
+            commands::settings::get_user_profile,
+            commands::settings::update_user_profile,
             // desktop
             commands::desktop::get_desktop_capabilities,
             commands::desktop::send_desktop_notification,

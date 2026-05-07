@@ -4,6 +4,7 @@ import type { AvatarType } from '@/stores/userProfileStore';
 
 /**
  * Resolves a file-type avatar value to a renderable src string.
+ * - Inline data URLs are returned directly.
  * - Relative paths are resolved via `read_attachment_preview`.
  */
 export function useResolvedAvatarSrc(
@@ -17,7 +18,10 @@ export function useResolvedAvatarSrc(
       setResolved(undefined);
       return;
     }
-    // Relative path → resolve via Rust command
+    if (avatarValue.startsWith('data:')) {
+      setResolved(avatarValue);
+      return;
+    }
     if (!isTauri()) {
       setResolved(undefined);
       return;

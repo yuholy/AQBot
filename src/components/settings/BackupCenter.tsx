@@ -32,6 +32,7 @@ export default function BackupCenter() {
   } = useBackupStore();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<BackupManifest | null>(null);
+  const [restoring, setRestoring] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [form] = Form.useForm();
   const [settingsForm] = Form.useForm();
@@ -59,6 +60,7 @@ export default function BackupCenter() {
 
   const handleRestore = async () => {
     if (!restoreTarget) return;
+    setRestoring(true);
     try {
       await restoreBackup(restoreTarget.id);
       setRestoreTarget(null);
@@ -74,6 +76,8 @@ export default function BackupCenter() {
       });
     } catch {
       message.error(t('error.unknown'));
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -316,9 +320,15 @@ export default function BackupCenter() {
         title={t('backup.restore')}
         open={!!restoreTarget}
         onOk={handleRestore}
-        onCancel={() => setRestoreTarget(null)}
-        okButtonProps={{ danger: true }}
-        confirmLoading={loading}
+        onCancel={() => {
+          if (!restoring) setRestoreTarget(null);
+        }}
+        okButtonProps={{ danger: true, loading: restoring }}
+        cancelButtonProps={{ disabled: restoring }}
+        closable={!restoring}
+        maskClosable={!restoring}
+        keyboard={!restoring}
+        confirmLoading={restoring}
         mask={{ enabled: true, blur: true }}
       >
         <Text type="warning">{t('backup.restoreWarning')}</Text>

@@ -259,7 +259,11 @@ pub async fn batch_delete_backups(db: &DatabaseConnection, ids: &[String]) -> Re
     Ok(())
 }
 
-/// Restore from a SQLite backup by replacing the current database file
+/// Restore from a SQLite backup by replacing the current database file.
+///
+/// This must only be used when the destination database is not open. For
+/// in-app restores, stage the files with `stage_restore` and restart so the
+/// replacement happens before SQLite opens the database.
 pub async fn restore_sqlite_backup(backup_path: &str, current_db_path: &str) -> Result<()> {
     let src = Path::new(backup_path);
     if !src.exists() {
@@ -271,6 +275,133 @@ pub async fn restore_sqlite_backup(backup_path: &str, current_db_path: &str) -> 
     std::fs::copy(src, current_db_path)
         .map_err(|e| AQBotError::Gateway(format!("Failed to restore backup: {}", e)))?;
     Ok(())
+}
+
+pub const RESTORE_MARKER_NAME: &str = "_pending_restore";
+
+/// Stage a database and optional master key for replacement on the next app
+/// startup, before the SQLite pool is opened.
+pub fn stage_restore(
+    source_db: &Path,
+    staging_db: &Path,
+    target_db_path: &Path,
+    app_data_dir: &Path,
+    source_master_key: Option<&Path>,
+    staging_master_key: Option<&Path>,
+) -> Result<()> {
+    if !source_db.exists() {
+        return Err(AQBotError::NotFound(format!(
+            "Backup database not found: {}",
+            source_db.display()
+        )));
+    }
+
+    if let Some(parent) = staging_db.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            AQBotError::Gateway(format!("Failed to create restore staging dir: {}", e))
+        })?;
+    }
+
+    std::fs::copy(source_db, staging_db).map_err(|e| {
+        AQBotError::Gateway(format!("Failed to stage database restore: {}", e))
+    })?;
+
+    let staged_key = match (source_master_key, staging_master_key) {
+        (Some(src), Some(dst)) => {
+            if !src.exists() {
+                return Err(AQBotError::NotFound(format!(
+                    "Backup master key not found: {}",
+                    src.display()
+                )));
+            }
+            std::fs::copy(src, dst).map_err(|e| {
+                AQBotError::Gateway(format!("Failed to stage master.key restore: {}", e))
+            })?;
+            Some(dst.to_path_buf())
+        }
+        _ => None,
+    };
+
+    let marker_path = app_data_dir.join(RESTORE_MARKER_NAME);
+    let marker_tmp = app_data_dir.join(format!("{}.tmp", RESTORE_MARKER_NAME));
+    let mut marker = format!("db={}\n", staging_db.display());
+    if let Some(path) = staged_key {
+        marker.push_str(&format!("master_key={}\n", path.display()));
+    }
+    std::fs::write(&marker_tmp, marker)
+        .map_err(|e| AQBotError::Gateway(format!("Failed to write restore marker: {}", e)))?;
+    std::fs::rename(&marker_tmp, &marker_path)
+        .map_err(|e| AQBotError::Gateway(format!("Failed to activate restore marker: {}", e)))?;
+
+    let target_str = target_db_path.to_string_lossy();
+    let _ = std::fs::remove_file(format!("{}-wal", target_str));
+    let _ = std::fs::remove_file(format!("{}-shm", target_str));
+
+    Ok(())
+}
+
+/// Apply a staged restore. This is called on startup before the database and
+/// master key are loaded.
+pub fn apply_staged_restore(app_data_dir: &Path, db_file_path: &Path, master_key_path: &Path) {
+    let marker_path = app_data_dir.join(RESTORE_MARKER_NAME);
+    if !marker_path.exists() {
+        return;
+    }
+
+    let marker = match std::fs::read_to_string(&marker_path) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!("Failed to read restore marker: {}", e);
+            let _ = std::fs::remove_file(&marker_path);
+            return;
+        }
+    };
+
+    let staged_db = marker
+        .lines()
+        .find_map(|line| line.strip_prefix("db="))
+        .map(PathBuf::from);
+    let staged_key = marker
+        .lines()
+        .find_map(|line| line.strip_prefix("master_key="))
+        .map(PathBuf::from);
+
+    let Some(staged_db) = staged_db else {
+        tracing::error!("Restore marker is missing staged database path");
+        let _ = std::fs::remove_file(&marker_path);
+        return;
+    };
+
+    let target_str = db_file_path.to_string_lossy();
+    let _ = std::fs::remove_file(format!("{}-wal", target_str));
+    let _ = std::fs::remove_file(format!("{}-shm", target_str));
+
+    if let Some(staged_key) = staged_key.as_ref() {
+        if staged_key.exists() {
+            if let Err(e) = std::fs::copy(staged_key, master_key_path) {
+                tracing::error!("Failed to apply staged master.key restore: {}", e);
+                return;
+            }
+        } else {
+            tracing::warn!("Staged master.key file is missing: {}", staged_key.display());
+        }
+    }
+
+    if staged_db.exists() {
+        if let Err(e) = std::fs::copy(&staged_db, db_file_path) {
+            tracing::error!("Failed to apply staged database restore: {}", e);
+            return;
+        }
+        tracing::info!("Staged restore applied successfully");
+    } else {
+        tracing::warn!("Staged database file is missing: {}", staged_db.display());
+    }
+
+    let _ = std::fs::remove_file(&staged_db);
+    if let Some(staged_key) = staged_key {
+        let _ = std::fs::remove_file(staged_key);
+    }
+    let _ = std::fs::remove_file(&marker_path);
 }
 
 /// Clean up old backups exceeding max_count (keeps most recent)

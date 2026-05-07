@@ -1,7 +1,9 @@
 use aqbot_core::types::{AgentTask, ExternalAgent, ExternalAgentConnectionTestResult};
 use serde_json::Value;
 
-use super::custom_http::{dispatch_task as dispatch_custom_http, test_connection as test_custom_http, ConnectorResponse};
+use super::custom_http::{
+    dispatch_task as dispatch_custom_http, test_connection as test_custom_http, ConnectorResponse,
+};
 use super::nanoclaw;
 use super::openclaw;
 

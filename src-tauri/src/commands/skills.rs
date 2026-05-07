@@ -189,10 +189,7 @@ fn is_local_skill_source(source: &str) -> bool {
         || path.is_absolute()
         || trimmed.starts_with('.')
         || trimmed.starts_with("file://")
-        || trimmed
-            .chars()
-            .nth(1)
-            .is_some_and(|c| c == ':')
+        || trimmed.chars().nth(1).is_some_and(|c| c == ':')
         || trimmed.starts_with("\\\\")
 }
 
@@ -236,11 +233,7 @@ async fn install_from_github(owner: &str, repo: &str, target_dir: &Path) -> Resu
                 "GitHub API rate limit exceeded. Set environment variable GITHUB_TOKEN (or GH_TOKEN) and restart AQBot, or use the skills.sh marketplace source.".to_string(),
             );
         }
-        return Err(format!(
-            "GitHub API returned status {}: {}",
-            status,
-            body
-        ));
+        return Err(format!("GitHub API returned status {}: {}", status, body));
     }
 
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
@@ -292,10 +285,16 @@ async fn install_from_github(owner: &str, repo: &str, target_dir: &Path) -> Resu
 async fn install_from_local(source: &str, target_dir: &Path) -> Result<String, String> {
     let source_path = normalize_local_source(source);
     if !source_path.exists() {
-        return Err(format!("Source path does not exist: {}", source_path.display()));
+        return Err(format!(
+            "Source path does not exist: {}",
+            source_path.display()
+        ));
     }
     if !source_path.is_dir() {
-        return Err(format!("Source path is not a directory: {}", source_path.display()));
+        return Err(format!(
+            "Source path is not a directory: {}",
+            source_path.display()
+        ));
     }
 
     let name = source_path
@@ -596,9 +595,7 @@ pub async fn check_skill_updates() -> Result<Vec<SkillUpdateInfo>, String> {
         );
 
         let client = reqwest::Client::new();
-        let response = github_request(&client, &url)
-            .send()
-            .await;
+        let response = github_request(&client, &url).send().await;
 
         if let Ok(resp) = response {
             if resp.status().is_success() {

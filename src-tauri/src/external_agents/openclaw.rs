@@ -2,10 +2,8 @@ use aqbot_core::types::{AgentTask, ExternalAgent, ExternalAgentConnectionTestRes
 use serde_json::{json, Value};
 
 use super::custom_http::{
-    dispatch_task as dispatch_generic_http,
-    fetch_task as fetch_generic_http_task,
-    test_connection as test_generic_http,
-    ConnectorResponse,
+    dispatch_task as dispatch_generic_http, fetch_task as fetch_generic_http_task,
+    test_connection as test_generic_http, ConnectorResponse,
 };
 
 fn build_openclaw_payload(task_payload: Value) -> Value {

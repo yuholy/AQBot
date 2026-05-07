@@ -52,7 +52,7 @@ function formatSyncTime(value: string | null): string | null {
 
 export default function WebDavSync() {
   const { t } = useTranslation();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const { settings, saveSettings } = useSettingsStore();
 
   const [config, setConfig] = useState<WebDavConfig>({
@@ -208,8 +208,17 @@ export default function WebDavSync() {
     if (!restoreTarget) return;
     try {
       await invoke('webdav_restore', { fileName: restoreTarget });
-      message.success(t('backup.restoreSuccess'));
       setRestoreTarget(null);
+      modal.confirm({
+        title: t('backup.restoreRestartTitle'),
+        content: t('backup.restoreRestartContent'),
+        okText: t('settings.storage.restartNow'),
+        cancelText: t('settings.storage.restartLater'),
+        onOk: async () => {
+          const { relaunch } = await import('@tauri-apps/plugin-process');
+          await relaunch();
+        },
+      });
     } catch (e) {
       message.error(String(e));
     }

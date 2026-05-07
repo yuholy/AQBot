@@ -78,10 +78,33 @@ fn extract_string_field(value: &Value, keys: &[&str]) -> Option<String> {
 }
 
 fn extract_assistant_content(value: &Value) -> Option<String> {
-    extract_string_field(value, &["message", "content", "text", "answer", "summary", "finalText", "output"]).or_else(|| {
-        value
-            .get("result")
-            .and_then(|result| extract_string_field(result, &["message", "content", "text", "answer", "summary", "finalText", "output"]))
+    extract_string_field(
+        value,
+        &[
+            "message",
+            "content",
+            "text",
+            "answer",
+            "summary",
+            "finalText",
+            "output",
+        ],
+    )
+    .or_else(|| {
+        value.get("result").and_then(|result| {
+            extract_string_field(
+                result,
+                &[
+                    "message",
+                    "content",
+                    "text",
+                    "answer",
+                    "summary",
+                    "finalText",
+                    "output",
+                ],
+            )
+        })
     })
 }
 
@@ -94,7 +117,15 @@ fn task_result_from_json(value: Value) -> ConnectorResponse {
     ConnectorResponse {
         external_task_id: extract_string_field(
             &value,
-            &["external_task_id", "externalTaskId", "task_id", "taskId", "jobId", "runId", "sessionId"],
+            &[
+                "external_task_id",
+                "externalTaskId",
+                "task_id",
+                "taskId",
+                "jobId",
+                "runId",
+                "sessionId",
+            ],
         ),
         status,
         result_payload: value,
@@ -205,7 +236,10 @@ pub async fn fetch_task(
                 client.get(format!("{base_url}/results/{external_task_id}")),
                 agent,
             )?;
-            fallback.send().await.map_err(|_| primary_error.to_string())?
+            fallback
+                .send()
+                .await
+                .map_err(|_| primary_error.to_string())?
         }
     };
 
@@ -247,9 +281,7 @@ pub async fn test_connection(
     agent: &ExternalAgent,
 ) -> Result<ExternalAgentConnectionTestResult, String> {
     let base_url = match agent.base_url.as_deref() {
-        Some(value) if !value.trim().is_empty() => {
-            value.trim().trim_end_matches('/').to_string()
-        }
+        Some(value) if !value.trim().is_empty() => value.trim().trim_end_matches('/').to_string(),
         _ => {
             return Ok(ExternalAgentConnectionTestResult {
                 ok: false,

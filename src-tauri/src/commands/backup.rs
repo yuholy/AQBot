@@ -67,13 +67,13 @@ pub async fn create_backup(
         &state.app_data_dir,
         std::path::Path::new(db_path),
     )
-        .await
-        .map_err(|e| e.to_string())
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn restore_backup(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, AppState>,
     backup_id: String,
 ) -> Result<(), String> {
@@ -90,23 +90,21 @@ pub async fn restore_backup(
     match manifest.version.as_str() {
         "json" => Err("JSON backups cannot be restored directly".to_string()),
         "sqlite" => {
-            backup::restore_sqlite_backup(&backup_path, db_path)
-                .await
-                .map_err(|e| e.to_string())?;
-            let _ = std::fs::remove_file(format!("{}-wal", db_path));
-            let _ = std::fs::remove_file(format!("{}-shm", db_path));
-            app.restart();
+            let staging_db = state.app_data_dir.join("_restore_staging.db");
+            backup::stage_restore(
+                std::path::Path::new(&backup_path),
+                &staging_db,
+                std::path::Path::new(db_path),
+                &state.app_data_dir,
+                None,
+                None,
+            )
+            .map_err(|e| e.to_string())?;
 
             #[allow(unreachable_code)]
             Ok(())
         }
-        _ => restore_backup_zip(
-            app,
-            &state.app_data_dir,
-            &backup_path,
-            db_path,
-        )
-        .await,
+        _ => restore_backup_zip(&state.app_data_dir, &backup_path, db_path).await,
     }
 }
 
@@ -237,8 +235,7 @@ async fn restart_auto_backup(
 
             // Create auto backup (SQLite format for speed)
             let db_path = app_dir.join("aqbot.db");
-            if let Err(e) =
-                backup::create_backup(&db, "zip", &backup_dir, &app_dir, &db_path).await
+            if let Err(e) = backup::create_backup(&db, "zip", &backup_dir, &app_dir, &db_path).await
             {
                 tracing::warn!("Auto-backup failed: {}", e);
             } else {
@@ -256,7 +253,6 @@ async fn restart_auto_backup(
 }
 
 async fn restore_backup_zip(
-    app: tauri::AppHandle,
     app_data_dir: &std::path::Path,
     backup_path: &str,
     current_db_path: &str,
@@ -293,21 +289,20 @@ async fn restore_backup_zip(
         }
     }
 
-    if let Some(ref key_path) = contents.master_key_path {
-        std::fs::copy(key_path, &master_key_dest)
-            .map_err(|e| format!("Failed to restore master.key: {}", e))?;
-        #[cfg(unix)]
-        {
-            let perms = std::fs::Permissions::from_mode(0o600);
-            let _ = std::fs::set_permissions(&master_key_dest, perms);
-        }
-    }
-
-    backup::restore_sqlite_backup(contents.db_path.to_str().unwrap_or(""), current_db_path)
-        .await
-        .map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(format!("{}-wal", current_db_path));
-    let _ = std::fs::remove_file(format!("{}-shm", current_db_path));
+    let staging_db = app_data_dir.join("_restore_staging.db");
+    let staging_key = app_data_dir.join("_restore_staging.master.key");
+    backup::stage_restore(
+        &contents.db_path,
+        &staging_db,
+        std::path::Path::new(current_db_path),
+        app_data_dir,
+        contents.master_key_path.as_deref(),
+        contents
+            .master_key_path
+            .as_ref()
+            .map(|_| staging_key.as_path()),
+    )
+    .map_err(|e| e.to_string())?;
 
     if contents.has_documents {
         let docs_source = temp_dir.join("documents");
@@ -356,8 +351,6 @@ async fn restore_backup_zip(
                 .map_err(|e| format!("Failed to restore ssl: {}", e))?;
         }
     }
-
-    app.restart();
 
     #[allow(unreachable_code)]
     Ok(())

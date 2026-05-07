@@ -106,7 +106,7 @@ pub async fn webdav_list_backups(
 /// Restore from a remote WebDAV backup.
 #[tauri::command]
 pub async fn webdav_restore(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, AppState>,
     file_name: String,
 ) -> Result<(), String> {
@@ -166,26 +166,24 @@ pub async fn webdav_restore(
         let _ = std::fs::set_permissions(&safety_key_backup, perms);
     }
 
-    // 5. Restore master.key if present in backup (required for decrypting API keys)
-    if let Some(ref key_path) = contents.master_key_path {
-        std::fs::copy(key_path, &master_key_dest)
-            .map_err(|e| format!("Failed to restore master.key: {}", e))?;
-        #[cfg(unix)]
-        {
-            let perms = std::fs::Permissions::from_mode(0o600);
-            let _ = std::fs::set_permissions(&master_key_dest, perms);
-        }
-    }
+    // 5. Stage database and master.key restore for next startup. The current
+    // SQLite database is open, so replacing it in-place here can corrupt it.
+    let staging_db = state.app_data_dir.join("_restore_staging.db");
+    let staging_key = state.app_data_dir.join("_restore_staging.master.key");
+    backup::stage_restore(
+        &contents.db_path,
+        &staging_db,
+        Path::new(db_path),
+        &state.app_data_dir,
+        contents.master_key_path.as_deref(),
+        contents
+            .master_key_path
+            .as_ref()
+            .map(|_| staging_key.as_path()),
+    )
+    .map_err(|e| e.to_string())?;
 
-    // 6. Restore database — also remove stale WAL/SHM files so SQLite
-    //    doesn't try to replay a journal that belongs to the old database.
-    backup::restore_sqlite_backup(contents.db_path.to_str().unwrap_or(""), db_path)
-        .await
-        .map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(format!("{}-wal", db_path));
-    let _ = std::fs::remove_file(format!("{}-shm", db_path));
-
-    // 7. Restore documents if present
+    // 6. Restore documents if present
     if contents.has_documents {
         let docs_source = temp_dir.join("documents");
         let docs_target = webdav::documents_sync_root();
@@ -195,7 +193,7 @@ pub async fn webdav_restore(
         }
     }
 
-    // 7b. Restore workspace if present
+    // 6b. Restore workspace if present
     if contents.has_workspace {
         let ws_source = temp_dir.join("workspace");
         let ws_target = crate::paths::aqbot_home().join("workspace");
@@ -205,7 +203,7 @@ pub async fn webdav_restore(
         }
     }
 
-    // 7c. Restore skills if present
+    // 6c. Restore skills if present
     if contents.has_skills {
         let skills_source = temp_dir.join("aqbot_home").join("skills");
         let skills_target = crate::paths::aqbot_home().join("skills");
@@ -214,9 +212,6 @@ pub async fn webdav_restore(
                 .map_err(|e| format!("Failed to restore skills: {}", e))?;
         }
     }
-
-    // 8. Auto-restart to pick up the restored database
-    app.restart();
 
     #[allow(unreachable_code)]
     Ok(())

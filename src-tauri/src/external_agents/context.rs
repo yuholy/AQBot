@@ -2,10 +2,7 @@ use serde_json::{json, Value};
 
 use crate::AppState;
 
-pub async fn collect_context(
-    state: &AppState,
-    query: &str,
-) -> Value {
+pub async fn collect_context(state: &AppState, query: &str) -> Value {
     let kb_ids = match aqbot_core::repo::knowledge::list_knowledge_bases(&state.sea_db).await {
         Ok(bases) => bases
             .into_iter()
@@ -15,7 +12,10 @@ pub async fn collect_context(
         Err(_) => Vec::new(),
     };
     let mem_ids = match aqbot_core::repo::memory::list_namespaces(&state.sea_db).await {
-        Ok(namespaces) => namespaces.into_iter().map(|namespace| namespace.id).collect::<Vec<_>>(),
+        Ok(namespaces) => namespaces
+            .into_iter()
+            .map(|namespace| namespace.id)
+            .collect::<Vec<_>>(),
         Err(_) => Vec::new(),
     };
 

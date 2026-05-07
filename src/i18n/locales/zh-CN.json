@@ -922,6 +922,8 @@
     "noBackups": "暂无备份记录",
     "createSuccess": "备份创建成功",
     "restoreSuccess": "备份恢复成功，请重启应用",
+    "restoreRestartTitle": "备份已准备好",
+    "restoreRestartContent": "备份将在重启后应用。是否现在重启 AQBot？",
     "deleteSuccess": "备份已删除",
     "fileSize": "大小",
     "filePath": "文件",

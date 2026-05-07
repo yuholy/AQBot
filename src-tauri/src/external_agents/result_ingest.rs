@@ -6,7 +6,9 @@ use sea_orm::DatabaseConnection;
 use serde_json::Value;
 
 fn artifact_field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
-    value.get(key).or_else(|| value.get("result").and_then(|result| result.get(key)))
+    value
+        .get(key)
+        .or_else(|| value.get("result").and_then(|result| result.get(key)))
 }
 
 async fn save_inline_artifacts(
@@ -42,7 +44,9 @@ async fn save_inline_artifacts(
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data_base64)
             .or_else(|_| base64::engine::general_purpose::STANDARD.decode(data_base64.trim()))
-            .map_err(|e| aqbot_core::error::AQBotError::Validation(format!("Invalid artifact base64: {e}")))?;
+            .map_err(|e| {
+                aqbot_core::error::AQBotError::Validation(format!("Invalid artifact base64: {e}"))
+            })?;
         let saved = file_store.save_file(&bytes, name, mime_type)?;
         let stored_file_id = aqbot_core::utils::gen_id();
         aqbot_core::repo::stored_file::create_stored_file(

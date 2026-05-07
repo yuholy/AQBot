@@ -922,6 +922,8 @@
     "noBackups": "No backups yet",
     "createSuccess": "Backup created successfully",
     "restoreSuccess": "Backup restored. Please restart the app.",
+    "restoreRestartTitle": "Backup Ready",
+    "restoreRestartContent": "The backup will be applied after AQBot restarts. Restart now?",
     "deleteSuccess": "Backup deleted",
     "fileSize": "Size",
     "filePath": "File",

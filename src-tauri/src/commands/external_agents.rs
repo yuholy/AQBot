@@ -5,8 +5,7 @@ use tauri::State;
 use crate::external_agents::context::collect_context as collect_external_context;
 use crate::external_agents::custom_http::parse_json_object;
 use crate::external_agents::registry::{
-    dispatch_task as dispatch_connector_task,
-    fetch_task as fetch_connector_task,
+    dispatch_task as dispatch_connector_task, fetch_task as fetch_connector_task,
     test_connection as test_connector_connection,
 };
 use crate::external_agents::result_ingest::ingest_assistant_message;
@@ -86,19 +85,17 @@ async fn dispatch_task_from_parts(
             .await;
 
             let assistant_message = match (conversation_id, response.assistant_content.as_deref()) {
-                (Some(conversation_id), Some(content)) if !content.trim().is_empty() => {
-                    Some(
-                        ingest_assistant_message(
-                            &state.sea_db,
-                            conversation_id,
-                            source_message_id,
-                            content,
-                            &response.result_payload,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?,
+                (Some(conversation_id), Some(content)) if !content.trim().is_empty() => Some(
+                    ingest_assistant_message(
+                        &state.sea_db,
+                        conversation_id,
+                        source_message_id,
+                        content,
+                        &response.result_payload,
                     )
-                }
+                    .await
+                    .map_err(|e| e.to_string())?,
+                ),
                 _ => None,
             };
 
@@ -134,7 +131,9 @@ async fn dispatch_task_from_parts(
 }
 
 #[tauri::command]
-pub async fn list_external_agents(state: State<'_, AppState>) -> Result<Vec<ExternalAgent>, String> {
+pub async fn list_external_agents(
+    state: State<'_, AppState>,
+) -> Result<Vec<ExternalAgent>, String> {
     aqbot_core::repo::external_agent::list_external_agents(&state.sea_db)
         .await
         .map_err(|e| e.to_string())
@@ -234,10 +233,12 @@ pub async fn dispatch_external_agent_task(
         return Err("title is required".to_string());
     }
 
-    let agent =
-        aqbot_core::repo::external_agent::get_external_agent(&state.sea_db, &input.external_agent_id)
-            .await
-            .map_err(|e| e.to_string())?;
+    let agent = aqbot_core::repo::external_agent::get_external_agent(
+        &state.sea_db,
+        &input.external_agent_id,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let parsed_context = parse_json_object(input.context_json.as_deref(), json!({}))?;
     let mut context = if parsed_context.is_object() {
         parsed_context

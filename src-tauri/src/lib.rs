@@ -364,6 +364,12 @@ pub fn run() {
             aqbot_core::storage_paths::ensure_documents_dirs()
                 .expect("failed to create documents storage dirs");
 
+            aqbot_core::repo::backup::apply_staged_restore(
+                &app_dir,
+                &app_dir.join("aqbot.db"),
+                &app_dir.join("master.key"),
+            );
+
             let db_path = format!("sqlite:{}/aqbot.db", app_dir.display());
 
             // Load or generate master key BEFORE opening the database.

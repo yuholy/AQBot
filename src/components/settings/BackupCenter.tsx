@@ -23,7 +23,7 @@ function formatFileSize(bytes: number): string {
 
 export default function BackupCenter() {
   const { t } = useTranslation();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const {
     backups, loading, loadBackups, createBackup, restoreBackup,
     deleteBackup, batchDeleteBackups,
@@ -61,8 +61,17 @@ export default function BackupCenter() {
     if (!restoreTarget) return;
     try {
       await restoreBackup(restoreTarget.id);
-      message.success(t('backup.restoreSuccess'));
       setRestoreTarget(null);
+      modal.confirm({
+        title: t('backup.restoreRestartTitle'),
+        content: t('backup.restoreRestartContent'),
+        okText: t('settings.storage.restartNow'),
+        cancelText: t('settings.storage.restartLater'),
+        onOk: async () => {
+          const { relaunch } = await import('@tauri-apps/plugin-process');
+          await relaunch();
+        },
+      });
     } catch {
       message.error(t('error.unknown'));
     }

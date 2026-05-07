@@ -217,7 +217,12 @@ fn resolve_claude_command_path() -> Option<PathBuf> {
     }
 
     if let Some(home) = dirs::home_dir() {
-        candidates.push(home.join("AppData").join("Roaming").join("npm").join("claude.cmd"));
+        candidates.push(
+            home.join("AppData")
+                .join("Roaming")
+                .join("npm")
+                .join("claude.cmd"),
+        );
     }
     candidates.push(PathBuf::from(r"C:\nvm4w\nodejs\claude.cmd"));
 
@@ -318,7 +323,9 @@ fn extract_latest_deepseek_reply(
     let mut text_parts: Vec<String> = Vec::new();
     for block in &message.content {
         match block {
-            DeepSeekSavedContentBlock::Thinking { thinking } => thinking_parts.push(thinking.clone()),
+            DeepSeekSavedContentBlock::Thinking { thinking } => {
+                thinking_parts.push(thinking.clone())
+            }
             DeepSeekSavedContentBlock::Text { text } => text_parts.push(text.clone()),
             DeepSeekSavedContentBlock::Other => {}
         }
@@ -948,7 +955,13 @@ pub async fn agent_query_deepseek_tui(
                 };
 
                 if let Some(cwd_error) = cwd_error {
-                    (cwd_error, None, None, saved_deepseek_session_id.clone(), None)
+                    (
+                        cwd_error,
+                        None,
+                        None,
+                        saved_deepseek_session_id.clone(),
+                        None,
+                    )
                 } else {
                     match timeout(Duration::from_secs(600), command.output()).await {
                         Ok(Ok(output)) => {
@@ -1880,9 +1893,7 @@ pub async fn agent_query(
                 }
                 SDKMessage::Error { message: err_msg } => {
                     tracing::error!("[agent] Error: {}", err_msg);
-                    if err_msg.contains("reasoning_content")
-                        && err_msg.contains("thinking mode")
-                    {
+                    if err_msg.contains("reasoning_content") && err_msg.contains("thinking mode") {
                         if let Err(clear_err) =
                             agent_session::clear_sdk_context_by_conversation_id(&db, &conv_id).await
                         {
@@ -2073,7 +2084,8 @@ pub async fn agent_query(
                 conversation_id: conv_id.clone(),
                 assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
                 text: final_content.clone(),
-                thinking: Some(accumulated_thinking.clone()).filter(|value| !value.trim().is_empty()),
+                thinking: Some(accumulated_thinking.clone())
+                    .filter(|value| !value.trim().is_empty()),
                 model: Some(model_id.clone()),
                 session_id: None,
                 usage: usage_payload,

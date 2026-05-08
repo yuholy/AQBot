@@ -220,7 +220,7 @@
     },
     "multiModelUseAsContext": "Use as Context",
     "pinnedModels": "Pinned models",
-    "scrollToBottom": "Scroll to bottom",
+    "scrollToBottom": "",
     "searchModelOrProvider": "Search model or provider",
     "switchModel": "Switch model",
     "stats": {

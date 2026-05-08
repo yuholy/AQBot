@@ -220,7 +220,7 @@
     },
     "multiModelUseAsContext": "컨텍스트로 사용",
     "pinnedModels": "고정 모델",
-    "scrollToBottom": "맨 아래로 스크롤",
+    "scrollToBottom": "",
     "searchModelOrProvider": "모델 또는 공급자 검색",
     "switchModel": "모델 전환",
     "stats": {

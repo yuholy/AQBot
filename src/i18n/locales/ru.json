@@ -220,7 +220,7 @@
     },
     "multiModelUseAsContext": "Использовать как контекст",
     "pinnedModels": "Закреплённые модели",
-    "scrollToBottom": "Прокрутить вниз",
+    "scrollToBottom": "",
     "searchModelOrProvider": "Поиск модели или провайдера",
     "switchModel": "Сменить модель",
     "stats": {

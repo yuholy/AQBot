@@ -220,7 +220,7 @@
     },
     "multiModelUseAsContext": "コンテキストとして使用",
     "pinnedModels": "ピン留めモデル",
-    "scrollToBottom": "最下部へスクロール",
+    "scrollToBottom": "",
     "searchModelOrProvider": "モデルまたはプロバイダーを検索",
     "switchModel": "モデルを切り替え",
     "stats": {

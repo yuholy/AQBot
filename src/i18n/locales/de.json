@@ -220,7 +220,7 @@
     },
     "multiModelUseAsContext": "Als Kontext verwenden",
     "pinnedModels": "Angeheftete Modelle",
-    "scrollToBottom": "Nach unten scrollen",
+    "scrollToBottom": "",
     "searchModelOrProvider": "Modell oder Anbieter suchen",
     "switchModel": "Modell wechseln",
     "stats": {

@@ -220,7 +220,7 @@
     },
     "multiModelUseAsContext": "用作上下文",
     "pinnedModels": "置頂模型",
-    "scrollToBottom": "回到底部",
+    "scrollToBottom": "",
     "searchModelOrProvider": "搜尋模型或服務商",
     "switchModel": "切換模型",
     "stats": {

@@ -220,7 +220,7 @@
     },
     "multiModelUseAsContext": "استخدام كسياق",
     "pinnedModels": "النماذج المثبّتة",
-    "scrollToBottom": "التمرير إلى الأسفل",
+    "scrollToBottom": "",
     "searchModelOrProvider": "البحث عن نموذج أو مزوّد",
     "switchModel": "تبديل النموذج",
     "stats": {

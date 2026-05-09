@@ -99,10 +99,10 @@ export function InputArea() {
   const activeAgentExecutorModel = useConversationStore((s) => s.activeAgentExecutorModel);
   const setAgentExecutorId = useConversationStore((s) => s.setActiveAgentExecutorId);
   const setActiveAgentExecutorModel = useConversationStore((s) => s.setActiveAgentExecutorModel);
-  const agentSessions = useAgentStore((s) => s.sessions);
+  const agentProfiles = useAgentStore((s) => s.profilesByConversation);
   const updateAgentCwd = useAgentStore((s) => s.updateCwd);
   const updateAgentPermissionMode = useAgentStore((s) => s.updatePermissionMode);
-  const fetchAgentSession = useAgentStore((s) => s.fetchSession);
+  const fetchAgentProfile = useAgentStore((s) => s.fetchProfile);
   const createConversation = useConversationStore((s) => s.createConversation);
   const messages = useConversationStore((s) => s.messages);
   const totalActiveCount = useConversationStore((s) => s.totalActiveCount);
@@ -158,9 +158,9 @@ export function InputArea() {
   const [agentExecutorModel, setAgentExecutorModel] = useState<string | null>(null);
   // Agent working directory state
   const [agentCwd, setAgentCwd] = useState<string | null>(null);
-  const currentAgentSession = activeConversationId ? agentSessions[activeConversationId] : undefined;
-  const resolvedAgentCwd = currentAgentSession?.cwd ?? agentCwd;
-  const resolvedAgentPermissionMode = currentAgentSession?.permission_mode ?? agentPermissionMode;
+  const currentAgentProfile = activeConversationId ? agentProfiles[activeConversationId] : undefined;
+  const resolvedAgentCwd = currentAgentProfile?.workspaceRoot ?? agentCwd;
+  const resolvedAgentPermissionMode = currentAgentProfile?.permissionMode ?? agentPermissionMode;
   const resolvedAgentExecutorModel = activeAgentExecutorModel ?? agentExecutorModel;
 
   // Knowledge base state
@@ -212,22 +212,22 @@ export function InputArea() {
   // Fetch agent permission mode on mount/conversation switch
   useEffect(() => {
     if (currentMode === 'agent' && activeConversationId) {
-      fetchAgentSession(activeConversationId)
-        .then((session) => {
-          if (session) {
-            setAgentPermissionMode(session.permission_mode || 'default');
-            setAgentCwd(session.cwd || null);
+      fetchAgentProfile(activeConversationId)
+        .then((profile) => {
+          if (profile) {
+            setAgentPermissionMode(profile.permissionMode || 'default');
+            setAgentCwd(profile.workspaceRoot || null);
           }
         })
         .catch(() => {});
     }
-  }, [currentMode, activeConversationId, fetchAgentSession]);
+  }, [currentMode, activeConversationId, fetchAgentProfile]);
 
   useEffect(() => {
     if (currentMode !== 'agent') return;
-    setAgentCwd(currentAgentSession?.cwd || null);
-    setAgentPermissionMode(currentAgentSession?.permission_mode || 'default');
-  }, [currentMode, currentAgentSession?.cwd, currentAgentSession?.permission_mode]);
+    setAgentCwd(currentAgentProfile?.workspaceRoot || null);
+    setAgentPermissionMode(currentAgentProfile?.permissionMode || 'default');
+  }, [currentMode, currentAgentProfile?.workspaceRoot, currentAgentProfile?.permissionMode]);
 
   useEffect(() => {
     if (!activeConversationId) {
@@ -837,21 +837,21 @@ export function InputArea() {
         if (companionStorageKey) localStorage.removeItem(companionStorageKey);
       }
       try {
-        const session = await fetchAgentSession(activeConversation.id);
-        if (!session?.cwd) {
+        const profile = await fetchAgentProfile(activeConversation.id);
+        if (!profile?.workspaceRoot) {
           const workspacePath = await invoke<string>('agent_ensure_workspace', {
             conversationId: activeConversation.id,
           });
           await updateAgentCwd(activeConversation.id, workspacePath);
           setAgentCwd(workspacePath);
         } else {
-          setAgentCwd(session.cwd);
+          setAgentCwd(profile.workspaceRoot);
         }
       } catch (e) {
         console.warn('Failed to init agent session:', e);
       }
     }
-  }, [activeConversation, updateConversation, companionModels, companionStorageKey, fetchAgentSession, updateAgentCwd]);
+  }, [activeConversation, updateConversation, companionModels, companionStorageKey, fetchAgentProfile, updateAgentCwd]);
 
   const handleSend = useCallback(async () => {
     const trimmed = value.trim();

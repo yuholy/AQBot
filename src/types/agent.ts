@@ -1,6 +1,61 @@
 export type AgentPermissionMode = 'default' | 'accept_edits' | 'full_access';
 export type AgentRuntimeStatus = 'idle' | 'running' | 'waiting_approval' | 'completed' | 'error';
 export type ApprovalStatus = 'pending' | 'approved' | 'denied';
+export type ResumeCapability = 'none' | 'replay_only' | 'resumable';
+export type AgentRunStatus =
+  | 'queued'
+  | 'starting'
+  | 'running'
+  | 'waiting_approval'
+  | 'waiting_input'
+  | 'cancelling'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted';
+
+export interface AgentProfile {
+  id: string;
+  conversationId: string;
+  workspaceRoot?: string | null;
+  permissionMode: AgentPermissionMode | string;
+  defaultRunnerKind: string;
+  defaultProviderId?: string | null;
+  defaultModelId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentRun {
+  id: string;
+  conversationId: string;
+  profileId: string;
+  runnerKind: string;
+  providerId?: string | null;
+  modelId?: string | null;
+  status: AgentRunStatus | string;
+  promptSnapshot: string;
+  sdkContextJson?: string | null;
+  workspaceRoot?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
+  errorSummary?: string | null;
+  tokenUsageJson?: string | null;
+  costUsd: number;
+  resumeCapability: ResumeCapability | string;
+  interruptedReason?: string | null;
+  resumeTokenJson?: string | null;
+}
+
+export interface AgentRunEvent {
+  id: string;
+  runId: string;
+  stepId?: string | null;
+  eventType: string;
+  payloadJson: string;
+  sequenceNo: number;
+  createdAt: string;
+}
 
 export interface AgentSession {
   id: string;
@@ -69,6 +124,17 @@ export interface AgentDoneEvent {
   costUsd?: number;
 }
 
+export interface AgentLifecycleEvent {
+  conversationId?: string;
+  runId?: string;
+  status?: AgentRunStatus | string;
+  resumeCapability?: ResumeCapability | string;
+  interruptedReason?: string;
+  assistantMessageId?: string;
+  text?: string;
+  message?: string;
+}
+
 export interface AgentErrorEvent {
   conversationId: string;
   assistantMessageId?: string;
@@ -115,4 +181,5 @@ export interface ToolCallState {
   approvalStatus?: ApprovalStatus;
   output?: string;
   isError?: boolean;
+  runId?: string;
 }

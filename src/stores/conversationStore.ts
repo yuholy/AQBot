@@ -2140,31 +2140,23 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         }).then(keepAgentUnlisten((fn) => { unlistenError = fn; }));
       });
 
-      // Invoke the selected backend executor (this creates the real user message in DB)
-      if (options?.executorId === 'claude-code') {
-        await invoke('agent_query_claude_code', {
+      const runnerKind = options?.executorId === 'claude-code'
+        ? 'claude_code'
+        : options?.executorId === 'deepseek-tui'
+          ? 'deepseek_tui'
+          : 'sdk';
+
+      await invoke('agent_start_run', {
+        input: {
           conversationId,
           prompt: content,
-          cwd: options.cwd || undefined,
-          permissionMode: options.permissionMode || undefined,
-          model: options.executorModel || undefined,
-        });
-      } else if (options?.executorId === 'deepseek-tui') {
-        await invoke('agent_query_deepseek_tui', {
-          conversationId,
-          prompt: content,
-          cwd: options.cwd || undefined,
-          permissionMode: options.permissionMode || undefined,
-          model: options.executorModel || undefined,
-        });
-      } else {
-        await invoke('agent_query', {
-          conversationId,
-          prompt: content,
-          providerId,
-          modelId,
-        });
-      }
+          runnerKind,
+          providerId: runnerKind === 'sdk' ? providerId : undefined,
+          modelId: options?.executorModel || modelId,
+          cwd: options?.cwd || undefined,
+          permissionMode: options?.permissionMode || undefined,
+        },
+      });
 
       // Wait for agent-done or agent-error event
       await eventPromise;

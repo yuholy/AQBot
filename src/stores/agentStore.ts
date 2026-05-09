@@ -1,17 +1,20 @@
 import { create } from 'zustand';
 import { invoke, listen, type UnlistenFn } from '@/lib/invoke';
 import type {
-  AgentSession,
-  ToolCallState,
-  ToolUseEvent,
-  ToolStartEvent,
-  ToolResultEvent,
-  PermissionRequestEvent,
-  AskUserEvent,
-  AgentStatusEvent,
   AgentDoneEvent,
+  AgentLifecycleEvent,
+  AgentProfile,
+  AgentRun,
+  AgentRunEvent,
+  AgentSession,
+  AgentStatusEvent,
+  AskUserEvent,
+  PermissionRequestEvent,
+  ToolCallState,
+  ToolResultEvent,
+  ToolStartEvent,
+  ToolUseEvent,
 } from '@/types/agent';
-import type { ToolExecution } from '@/types/mcp';
 
 interface QueryStats {
   numTurns?: number;
@@ -20,25 +23,44 @@ interface QueryStats {
   costUsd?: number;
 }
 
+const EMPTY_RUN_EVENTS: AgentRunEvent[] = [];
+
 interface AgentStore {
-  // Session cache (truth lives in backend DB)
+  profilesByConversation: Record<string, AgentProfile>;
+  runsByConversation: Record<string, AgentRun[]>;
+  runEventsByRunId: Record<string, AgentRunEvent[]>;
+  activeRunIdByConversation: Record<string, string | undefined>;
+
   sessions: Record<string, AgentSession>;
+  agentStatus: Record<string, string>;
+  pendingPermissions: Record<string, PermissionRequestEvent>;
+  pendingAskUser: Record<string, AskUserEvent>;
+  toolCalls: Record<string, ToolCallState>;
+  sdkIdToExecId: Record<string, string>;
+  queryStats: Record<string, QueryStats>;
 
-  // Runtime state
-  agentStatus: Record<string, string>; // conversationId → status message
-  pendingPermissions: Record<string, PermissionRequestEvent>; // toolUseId → request
-  pendingAskUser: Record<string, AskUserEvent>; // askId → request
-  toolCalls: Record<string, ToolCallState>; // toolUseId or execId → state
-  sdkIdToExecId: Record<string, string>; // SDK toolUseId → DB execution ID mapping
-  queryStats: Record<string, QueryStats>; // assistantMessageId → cost stats
-
-  // Actions
+  fetchProfile: (conversationId: string) => Promise<AgentProfile | null>;
   fetchSession: (conversationId: string) => Promise<AgentSession | null>;
+  updateProfile: (
+    input: Partial<Pick<AgentProfile, 'workspaceRoot' | 'permissionMode' | 'defaultRunnerKind' | 'defaultProviderId' | 'defaultModelId'>> & {
+      conversationId: string;
+    },
+  ) => Promise<AgentProfile | null>;
   updateCwd: (conversationId: string, cwd: string) => Promise<void>;
   updatePermissionMode: (conversationId: string, mode: string) => Promise<void>;
+  fetchRuns: (conversationId: string) => Promise<AgentRun[]>;
+  fetchRunEvents: (runId: string) => Promise<AgentRunEvent[]>;
+  refreshConversationState: (conversationId: string) => Promise<void>;
+  getLatestRun: (conversationId: string) => AgentRun | undefined;
+  getActiveRun: (conversationId: string) => AgentRun | undefined;
+  getRunTimeline: (runId: string) => AgentRunEvent[];
+  canResumeRun: (runId: string) => boolean;
+  canReplayRun: (runId: string) => boolean;
   approveToolUse: (conversationId: string, toolUseId: string, decision: string) => Promise<void>;
+  respondAskUser: (askId: string, answer: string) => Promise<void>;
+  cancelRun: (conversationId: string) => Promise<void>;
+  resumeRun: (runId: string) => Promise<void>;
 
-  // Event handlers
   handleToolUse: (event: ToolUseEvent) => void;
   handleToolStart: (event: ToolStartEvent) => void;
   handleToolResult: (event: ToolResultEvent) => void;
@@ -46,19 +68,214 @@ interface AgentStore {
   handlePermissionResolved: (toolUseId: string, decision: string) => void;
   handleAskUser: (event: AskUserEvent) => void;
   handleAskUserResolved: (askId: string) => void;
-  respondAskUser: (askId: string, answer: string) => Promise<void>;
   handleStatus: (conversationId: string, message: string) => void;
   clearStatus: (conversationId: string) => void;
   handleDone: (event: AgentDoneEvent) => void;
 
-  // History
   loadToolHistory: (conversationId: string) => Promise<void>;
-
-  // Cleanup
   clearConversation: (conversationId: string) => void;
 }
 
+type EventPayload = Record<string, unknown>;
+
+const ACTIVE_RUN_STATUSES = new Set([
+  'queued',
+  'starting',
+  'running',
+  'waiting_approval',
+  'waiting_input',
+  'cancelling',
+]);
+
+function parsePayload(payloadJson: string): EventPayload {
+  try {
+    return JSON.parse(payloadJson) as EventPayload;
+  } catch {
+    return {};
+  }
+}
+
+function toCompatSession(profile: AgentProfile, run?: AgentRun): AgentSession {
+  const runtimeStatus = run?.status && ACTIVE_RUN_STATUSES.has(run.status)
+    ? (run.status as AgentSession['runtime_status'])
+    : run?.status === 'completed'
+      ? 'completed'
+      : run?.status === 'failed' || run?.status === 'interrupted'
+        ? 'error'
+        : 'idle';
+
+  let totalTokens = 0;
+  if (run?.tokenUsageJson) {
+    try {
+      const usage = JSON.parse(run.tokenUsageJson) as { total_tokens?: number; input_tokens?: number; output_tokens?: number };
+      totalTokens = usage.total_tokens ?? ((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0));
+    } catch {
+      totalTokens = 0;
+    }
+  }
+
+  return {
+    id: profile.id,
+    conversation_id: profile.conversationId,
+    cwd: profile.workspaceRoot ?? undefined,
+    permission_mode: profile.permissionMode as AgentSession['permission_mode'],
+    runtime_status: runtimeStatus,
+    total_tokens: totalTokens,
+    total_cost_usd: run?.costUsd ?? 0,
+  };
+}
+
+function projectConversationState(
+  conversationId: string,
+  runs: AgentRun[],
+  runEventsByRunId: Record<string, AgentRunEvent[]>,
+) {
+  const toolCalls: Record<string, ToolCallState> = {};
+  const pendingPermissions: Record<string, PermissionRequestEvent> = {};
+  const pendingAskUser: Record<string, AskUserEvent> = {};
+  const sdkIdToExecId: Record<string, string> = {};
+  let activeRunId: string | undefined;
+  let statusMessage: string | undefined;
+
+  for (const run of runs) {
+    if (!activeRunId && ACTIVE_RUN_STATUSES.has(run.status)) {
+      activeRunId = run.id;
+    }
+    const events = runEventsByRunId[run.id] ?? [];
+    for (const event of events) {
+      const payload = parsePayload(event.payloadJson);
+      switch (event.eventType) {
+        case 'tool_use': {
+          const toolUseId = String(payload.toolUseId ?? '');
+          if (!toolUseId) break;
+          const toolName = String(payload.toolName ?? '');
+          const executionId = typeof payload.executionId === 'string' ? payload.executionId : undefined;
+          const input = (payload.input as Record<string, unknown> | undefined) ?? {};
+          const assistantMessageId = String(payload.assistantMessageId ?? '');
+          const toolCall: ToolCallState = {
+            toolUseId,
+            toolName,
+            input,
+            assistantMessageId,
+            executionStatus: 'queued',
+            runId: run.id,
+          };
+          toolCalls[toolUseId] = toolCall;
+          if (executionId) {
+            toolCalls[executionId] = { ...toolCall, toolUseId: executionId };
+            sdkIdToExecId[toolUseId] = executionId;
+          }
+          break;
+        }
+        case 'tool_start': {
+          const toolUseId = String(payload.toolUseId ?? '');
+          const existing = toolCalls[toolUseId];
+          if (!existing) break;
+          toolCalls[toolUseId] = { ...existing, executionStatus: 'running' };
+          const execId = sdkIdToExecId[toolUseId];
+          if (execId) toolCalls[execId] = { ...toolCalls[toolUseId], toolUseId: execId };
+          break;
+        }
+        case 'tool_result': {
+          const toolUseId = String(payload.toolUseId ?? '');
+          const existing = toolCalls[toolUseId];
+          const next: ToolCallState = {
+            toolUseId,
+            toolName: String(payload.toolName ?? existing?.toolName ?? ''),
+            input: existing?.input ?? {},
+            assistantMessageId: existing?.assistantMessageId ?? '',
+            executionStatus: payload.isError ? 'failed' : 'success',
+            approvalStatus: existing?.approvalStatus,
+            output: typeof payload.content === 'string' ? payload.content : JSON.stringify(payload.content ?? ''),
+            isError: Boolean(payload.isError),
+            runId: run.id,
+          };
+          toolCalls[toolUseId] = next;
+          const execId = sdkIdToExecId[toolUseId];
+          if (execId) toolCalls[execId] = { ...next, toolUseId: execId };
+          break;
+        }
+        case 'permission_request': {
+          const toolUseId = String(payload.toolUseId ?? '');
+          if (!toolUseId) break;
+          pendingPermissions[toolUseId] = {
+            conversationId,
+            assistantMessageId: String(payload.assistantMessageId ?? toolCalls[toolUseId]?.assistantMessageId ?? ''),
+            toolUseId,
+            toolName: String(payload.toolName ?? toolCalls[toolUseId]?.toolName ?? ''),
+            input: (payload.input as Record<string, unknown> | undefined) ?? {},
+            riskLevel: 'execute',
+          };
+          break;
+        }
+        case 'permission_resolved': {
+          const toolUseId = String(payload.toolUseId ?? '');
+          if (toolUseId) {
+            delete pendingPermissions[toolUseId];
+            const existing = toolCalls[toolUseId];
+            if (existing) {
+              const approvalStatus = payload.decision === 'deny' ? 'denied' : 'approved';
+              toolCalls[toolUseId] = { ...existing, approvalStatus };
+              const execId = sdkIdToExecId[toolUseId];
+              if (execId) toolCalls[execId] = { ...toolCalls[toolUseId], toolUseId: execId };
+            }
+          }
+          break;
+        }
+        case 'ask_user': {
+          const askId = String(payload.askId ?? '');
+          if (!askId) break;
+          pendingAskUser[askId] = {
+            conversationId,
+            assistantMessageId: String(payload.assistantMessageId ?? ''),
+            askId,
+            question: String(payload.question ?? ''),
+            options: Array.isArray(payload.options) ? payload.options.map(String) : undefined,
+          };
+          break;
+        }
+        case 'ask_resolved': {
+          const askId = String(payload.askId ?? '');
+          if (askId) delete pendingAskUser[askId];
+          break;
+        }
+        case 'status': {
+          statusMessage = typeof payload.message === 'string' ? payload.message : statusMessage;
+          break;
+        }
+        case 'run_interrupted': {
+          statusMessage = 'Run interrupted';
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  }
+
+  if (!activeRunId && runs.length > 0) {
+    activeRunId = runs[0].id;
+  }
+
+  return {
+    toolCalls,
+    pendingPermissions,
+    pendingAskUser,
+    sdkIdToExecId,
+    activeRunId,
+    statusMessage,
+  };
+}
+
+function latestRun(runs: AgentRun[] | undefined): AgentRun | undefined {
+  return runs?.[0];
+}
+
 export const useAgentStore = create<AgentStore>((set, get) => ({
+  profilesByConversation: {},
+  runsByConversation: {},
+  runEventsByRunId: {},
+  activeRunIdByConversation: {},
   sessions: {},
   agentStatus: {},
   pendingPermissions: {},
@@ -67,61 +284,239 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   sdkIdToExecId: {},
   queryStats: {},
 
-  fetchSession: async (conversationId) => {
+  fetchProfile: async (conversationId) => {
     try {
-      const session = await invoke<AgentSession | null>('agent_get_session', {
-        conversationId,
+      const profile = await invoke<AgentProfile>('agent_get_profile', { conversationId });
+      set((s) => {
+        const latest = latestRun(s.runsByConversation[conversationId]);
+        return {
+          profilesByConversation: { ...s.profilesByConversation, [conversationId]: profile },
+          sessions: { ...s.sessions, [conversationId]: toCompatSession(profile, latest) },
+        };
       });
-      if (session) {
-        set((s) => ({
-          sessions: { ...s.sessions, [conversationId]: session },
-        }));
-      }
-      return session;
+      return profile;
     } catch (e) {
-      console.error('[agentStore] fetchSession failed:', e);
+      console.error('[agentStore] fetchProfile failed:', e);
+      return null;
+    }
+  },
+
+  fetchSession: async (conversationId) => {
+    await get().refreshConversationState(conversationId);
+    return get().sessions[conversationId] ?? null;
+  },
+
+  updateProfile: async (input) => {
+    try {
+      const profile = await invoke<AgentProfile>('agent_update_profile', {
+        input: {
+          conversationId: input.conversationId,
+          workspaceRoot: input.workspaceRoot,
+          permissionMode: input.permissionMode,
+          defaultRunnerKind: input.defaultRunnerKind,
+          defaultProviderId: input.defaultProviderId,
+          defaultModelId: input.defaultModelId,
+        },
+      });
+      set((s) => {
+        const latest = latestRun(s.runsByConversation[input.conversationId]);
+        return {
+          profilesByConversation: {
+            ...s.profilesByConversation,
+            [input.conversationId]: profile,
+          },
+          sessions: {
+            ...s.sessions,
+            [input.conversationId]: toCompatSession(profile, latest),
+          },
+        };
+      });
+      return profile;
+    } catch (e) {
+      console.error('[agentStore] updateProfile failed:', e);
       return null;
     }
   },
 
   updateCwd: async (conversationId, cwd) => {
-    try {
-      const session = await invoke<AgentSession>('agent_update_session', {
-        conversationId,
-        cwd,
-      });
-      set((s) => ({
-        sessions: { ...s.sessions, [conversationId]: session },
-      }));
-    } catch (e) {
-      console.error('[agentStore] updateCwd failed:', e);
-    }
+    await get().updateProfile({ conversationId, workspaceRoot: cwd });
   },
 
   updatePermissionMode: async (conversationId, mode) => {
+    await get().updateProfile({ conversationId, permissionMode: mode });
+  },
+
+  fetchRuns: async (conversationId) => {
     try {
-      const session = await invoke<AgentSession>('agent_update_session', {
-        conversationId,
-        permissionMode: mode,
+      const runs = await invoke<AgentRun[]>('agent_list_runs', { conversationId });
+      set((s) => {
+        const profile = s.profilesByConversation[conversationId];
+        return {
+          runsByConversation: { ...s.runsByConversation, [conversationId]: runs },
+          activeRunIdByConversation: {
+            ...s.activeRunIdByConversation,
+            [conversationId]: runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status))?.id ?? runs[0]?.id,
+          },
+          sessions: profile
+            ? { ...s.sessions, [conversationId]: toCompatSession(profile, latestRun(runs)) }
+            : s.sessions,
+        };
       });
-      set((s) => ({
-        sessions: { ...s.sessions, [conversationId]: session },
-      }));
+      return runs;
     } catch (e) {
-      console.error('[agentStore] updatePermissionMode failed:', e);
+      console.error('[agentStore] fetchRuns failed:', e);
+      return [];
     }
+  },
+
+  fetchRunEvents: async (runId) => {
+    try {
+      const events = await invoke<AgentRunEvent[]>('agent_list_run_events', { runId });
+      set((s) => ({
+        runEventsByRunId: { ...s.runEventsByRunId, [runId]: events },
+      }));
+      return events;
+    } catch (e) {
+      console.error('[agentStore] fetchRunEvents failed:', e);
+      return [];
+    }
+  },
+
+  getLatestRun: (conversationId) => latestRun(get().runsByConversation[conversationId]),
+
+  getActiveRun: (conversationId) => {
+    const activeRunId = get().activeRunIdByConversation[conversationId];
+    const runs = get().runsByConversation[conversationId] ?? [];
+    return runs.find((run) => run.id === activeRunId)
+      ?? runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  },
+
+  getRunTimeline: (runId) => get().runEventsByRunId[runId] ?? EMPTY_RUN_EVENTS,
+
+  canResumeRun: (runId) => {
+    const run = Object.values(get().runsByConversation)
+      .flat()
+      .find((item) => item.id === runId);
+    return run?.status === 'interrupted' && run.resumeCapability === 'resumable';
+  },
+
+  canReplayRun: (runId) => {
+    const run = Object.values(get().runsByConversation)
+      .flat()
+      .find((item) => item.id === runId);
+    return run?.status === 'interrupted' && run.resumeCapability === 'replay_only';
+  },
+
+  refreshConversationState: async (conversationId) => {
+    const profile = await get().fetchProfile(conversationId);
+    const runs = await get().fetchRuns(conversationId);
+    const runEventsEntries = await Promise.all(
+      runs.map(async (run) => [run.id, await get().fetchRunEvents(run.id)] as const),
+    );
+    const runEventsByRunId = Object.fromEntries(runEventsEntries);
+    const projection = projectConversationState(conversationId, runs, runEventsByRunId);
+
+    set((s) => ({
+      runEventsByRunId: { ...s.runEventsByRunId, ...runEventsByRunId },
+      toolCalls: {
+        ...Object.fromEntries(
+          Object.entries(s.toolCalls).filter(([, value]) => value.runId == null || !runs.some((run) => run.id === value.runId)),
+        ),
+        ...projection.toolCalls,
+      },
+      pendingPermissions: {
+        ...Object.fromEntries(
+          Object.entries(s.pendingPermissions).filter(([, value]) => value.conversationId !== conversationId),
+        ),
+        ...projection.pendingPermissions,
+      },
+      pendingAskUser: {
+        ...Object.fromEntries(
+          Object.entries(s.pendingAskUser).filter(([, value]) => value.conversationId !== conversationId),
+        ),
+        ...projection.pendingAskUser,
+      },
+      sdkIdToExecId: { ...s.sdkIdToExecId, ...projection.sdkIdToExecId },
+      activeRunIdByConversation: {
+        ...s.activeRunIdByConversation,
+        [conversationId]: projection.activeRunId,
+      },
+      agentStatus: {
+        ...s.agentStatus,
+        ...(projection.statusMessage ? { [conversationId]: projection.statusMessage } : {}),
+      },
+      sessions:
+        profile != null
+          ? { ...s.sessions, [conversationId]: toCompatSession(profile, latestRun(runs)) }
+          : s.sessions,
+    }));
   },
 
   approveToolUse: async (conversationId, toolUseId, decision) => {
     try {
-      await invoke('agent_approve', {
-        conversationId,
-        toolUseId,
-        decision,
+      const runId = get().activeRunIdByConversation[conversationId]
+        ?? latestRun(get().runsByConversation[conversationId])?.id;
+      if (!runId) return;
+      await invoke('agent_control_run', {
+        input: {
+          runId,
+          action: decision === 'deny' ? 'deny' : 'approve',
+          targetId: toolUseId,
+          value: decision,
+          conversationId,
+        },
       });
       get().handlePermissionResolved(toolUseId, decision);
     } catch (e) {
       console.error('[agentStore] approveToolUse failed:', e);
+    }
+  },
+
+  respondAskUser: async (askId, answer) => {
+    try {
+      const ask = get().pendingAskUser[askId];
+      if (!ask) return;
+      const runId = get().activeRunIdByConversation[ask.conversationId]
+        ?? latestRun(get().runsByConversation[ask.conversationId])?.id;
+      if (!runId) return;
+      await invoke('agent_control_run', {
+        input: {
+          runId,
+          action: 'answer',
+          targetId: askId,
+          value: answer,
+          conversationId: ask.conversationId,
+        },
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      get().handleAskUserResolved(askId);
+    } catch (e) {
+      console.error('[agentStore] respondAskUser failed:', e);
+    }
+  },
+
+  cancelRun: async (conversationId) => {
+    try {
+      const runId = get().activeRunIdByConversation[conversationId]
+        ?? latestRun(get().runsByConversation[conversationId])?.id;
+      if (!runId) return;
+      await invoke('agent_control_run', {
+        input: {
+          runId,
+          action: 'cancel',
+          conversationId,
+        },
+      });
+    } catch (e) {
+      console.error('[agentStore] cancelRun failed:', e);
+    }
+  },
+
+  resumeRun: async (runId) => {
+    try {
+      await invoke('agent_resume_run', { runId });
+    } catch (e) {
+      console.error('[agentStore] resumeRun failed:', e);
     }
   },
 
@@ -138,7 +533,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         [event.toolUseId]: toolCall,
       };
       const idMap = { ...s.sdkIdToExecId };
-      // Also store by DB execution ID for inline <tool-call> tag lookups
       if (event.executionId) {
         updates[event.executionId] = { ...toolCall, toolUseId: event.executionId };
         idMap[event.toolUseId] = event.executionId;
@@ -207,12 +601,14 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     set((s) => {
       const { [toolUseId]: _removed, ...rest } = s.pendingPermissions;
       const existing = s.toolCalls[toolUseId];
+      const approvalStatus: ToolCallState['approvalStatus'] =
+        decision === 'deny' ? 'denied' : 'approved';
       const updatedToolCalls = existing
         ? {
             ...s.toolCalls,
             [toolUseId]: {
               ...existing,
-              approvalStatus: decision === 'deny' ? ('denied' as const) : ('approved' as const),
+              approvalStatus,
             },
           }
         : s.toolCalls;
@@ -236,17 +632,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     });
   },
 
-  respondAskUser: async (askId, answer) => {
-    try {
-      await invoke('agent_respond_ask', { askId, answer });
-      // Brief delay so user sees the loading/submitted feedback
-      await new Promise((r) => setTimeout(r, 500));
-      get().handleAskUserResolved(askId);
-    } catch (e) {
-      console.error('[agentStore] respondAskUser failed:', e);
-    }
-  },
-
   handleStatus: (conversationId, message) => {
     set((s) => ({
       agentStatus: { ...s.agentStatus, [conversationId]: message },
@@ -268,93 +653,47 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       stats.outputTokens = event.usage.output_tokens;
     }
     if (event.costUsd != null) stats.costUsd = event.costUsd;
-    if (event.assistantMessageId && Object.keys(stats).length > 0) {
-      set((s) => ({
-        queryStats: { ...s.queryStats, [event.assistantMessageId]: stats },
-      }));
-    }
+    set((s) => ({
+      queryStats: event.assistantMessageId && Object.keys(stats).length > 0
+        ? { ...s.queryStats, [event.assistantMessageId]: stats }
+        : s.queryStats,
+    }));
   },
 
   loadToolHistory: async (conversationId) => {
-    try {
-      const executions = await invoke<ToolExecution[]>('list_tool_executions', {
-        conversationId,
-      });
-      const agentExecs = executions.filter((e) => e.serverId === '__agent_sdk__');
-
-      const toolCalls: Record<string, ToolCallState> = {};
-      for (const exec of agentExecs) {
-        let executionStatus: ToolCallState['executionStatus'] = 'queued';
-        if (exec.status === 'running') executionStatus = 'running';
-        else if (exec.status === 'success') executionStatus = 'success';
-        else if (exec.status === 'failed') executionStatus = 'failed';
-        else if (exec.status === 'cancelled') executionStatus = 'cancelled';
-
-        // Historical records still showing pending/running means the agent
-        // was interrupted or a duplicate record was left behind.
-        // Treat them as success to avoid perpetual loading spinners.
-        if (executionStatus === 'queued' || executionStatus === 'running') {
-          executionStatus = 'success';
-        }
-
-        let approvalStatus: ToolCallState['approvalStatus'] | undefined;
-        if (exec.approvalStatus === 'approved') approvalStatus = 'approved';
-        else if (exec.approvalStatus === 'denied') approvalStatus = 'denied';
-        else if (exec.approvalStatus === 'pending') approvalStatus = 'pending';
-
-        let input: Record<string, unknown> = {};
-        if (exec.inputPreview) {
-          try { input = JSON.parse(exec.inputPreview); } catch { /* leave empty */ }
-        }
-
-        toolCalls[exec.id] = {
-          toolUseId: exec.id,
-          toolName: exec.toolName,
-          input,
-          assistantMessageId: exec.messageId ?? '',
-          executionStatus,
-          approvalStatus,
-          output: exec.outputPreview ?? exec.errorMessage,
-          isError: exec.status === 'failed',
-        };
-      }
-
-      set((s) => ({
-        toolCalls: { ...toolCalls, ...s.toolCalls },
-      }));
-    } catch (e) {
-      console.error('[agentStore] loadToolHistory failed:', e);
-    }
+    await get().refreshConversationState(conversationId);
   },
 
   clearConversation: (conversationId) => {
     set((s) => {
       const { [conversationId]: _session, ...sessions } = s.sessions;
       const { [conversationId]: _status, ...agentStatus } = s.agentStatus;
+      const { [conversationId]: _profile, ...profilesByConversation } = s.profilesByConversation;
+      const { [conversationId]: _runs, ...runsByConversation } = s.runsByConversation;
+      const { [conversationId]: _activeRun, ...activeRunIdByConversation } = s.activeRunIdByConversation;
 
       const pendingPermissions: Record<string, PermissionRequestEvent> = {};
       for (const [id, pr] of Object.entries(s.pendingPermissions)) {
-        if (pr.conversationId !== conversationId) {
-          pendingPermissions[id] = pr;
-        }
+        if (pr.conversationId !== conversationId) pendingPermissions[id] = pr;
       }
 
       const pendingAskUser: Record<string, AskUserEvent> = {};
       for (const [id, ask] of Object.entries(s.pendingAskUser)) {
-        if (ask.conversationId !== conversationId) {
-          pendingAskUser[id] = ask;
-        }
+        if (ask.conversationId !== conversationId) pendingAskUser[id] = ask;
       }
 
-      // ToolCallState doesn't carry conversationId; filter via pendingPermissions
-      // that were already associated with this conversation. A more thorough
-      // cleanup happens naturally as the conversation is no longer active.
-      return { sessions, agentStatus, pendingPermissions, pendingAskUser };
+      return {
+        sessions,
+        agentStatus,
+        profilesByConversation,
+        runsByConversation,
+        activeRunIdByConversation,
+        pendingPermissions,
+        pendingAskUser,
+      };
     });
   },
 }));
-
-// ── Event listener setup ─────────────────────────────────────────────────
 
 export function setupAgentEventListeners(): () => void {
   const unlisteners: Promise<UnlistenFn>[] = [];
@@ -398,8 +737,21 @@ export function setupAgentEventListeners(): () => void {
 
   unlisteners.push(
     listen<AgentDoneEvent>('agent-done', (event) => {
-      store.clearStatus(event.payload.conversationId);
+      const conversationId = event.payload.conversationId;
+      store.clearStatus(conversationId);
       store.handleDone(event.payload);
+      void useAgentStore.getState().refreshConversationState(conversationId);
+    }),
+  );
+
+  unlisteners.push(
+    listen<AgentLifecycleEvent>('agent-run-event', (event) => {
+      const conversationId = event.payload.conversationId;
+      if (!conversationId) return;
+      if (event.payload.message) {
+        store.handleStatus(conversationId, event.payload.message);
+      }
+      void useAgentStore.getState().refreshConversationState(conversationId);
     }),
   );
 

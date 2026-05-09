@@ -79,6 +79,7 @@ import { getAgentExecutorMeta } from '@/lib/agentExecutors';
 const THINKING_LOADING_MARKER = '<!--aqbot-thinking-loading-->';
 const DEFAULT_LIGHT_CODE_BLOCK_THEME = 'github-light';
 const DEFAULT_DARK_CODE_BLOCK_THEME = 'poimandres';
+const EMPTY_AGENT_RUN_EVENTS: readonly [] = [];
 const DANGEROUS_D2_STYLE_PATTERNS = [
   /javascript:/i,
   /expression\s*\(/i,
@@ -2419,8 +2420,7 @@ export function ChatView() {
   // Load agent tool history from DB on conversation switch
   useEffect(() => {
     if (activeConversation?.mode === 'agent' && activeConversationId) {
-      void useAgentStore.getState().fetchSession(activeConversationId);
-      useAgentStore.getState().loadToolHistory(activeConversationId);
+      void useAgentStore.getState().refreshConversationState(activeConversationId);
     }
   }, [activeConversationId, activeConversation?.mode]);
 
@@ -2441,11 +2441,24 @@ export function ChatView() {
   const currentAgentStatus = useAgentStore(
     (s) => (activeConversationId ? s.agentStatus[activeConversationId] : undefined),
   );
-  const currentAgentSession = useAgentStore(
-    (s) => (activeConversationId ? s.sessions[activeConversationId] : undefined),
+  const currentAgentProfile = useAgentStore(
+    (s) => (activeConversationId ? s.profilesByConversation[activeConversationId] : undefined),
+  );
+  const currentAgentRun = useAgentStore(
+    (s) => (activeConversationId ? s.runsByConversation[activeConversationId]?.[0] : undefined),
+  );
+  const currentAgentRunEvents = useAgentStore(
+    (s) => (currentAgentRun ? s.runEventsByRunId[currentAgentRun.id] ?? EMPTY_AGENT_RUN_EVENTS : EMPTY_AGENT_RUN_EVENTS),
+  );
+  const resumeAgentRun = useAgentStore((s) => s.resumeRun);
+  const canResumeCurrentAgentRun = useAgentStore((s) =>
+    currentAgentRun ? s.canResumeRun(currentAgentRun.id) : false,
+  );
+  const canReplayCurrentAgentRun = useAgentStore((s) =>
+    currentAgentRun ? s.canReplayRun(currentAgentRun.id) : false,
   );
   const agentPermissionLabel = useMemo(() => {
-    switch (currentAgentSession?.permission_mode) {
+    switch (currentAgentProfile?.permissionMode) {
       case 'accept_edits':
         return t('common.permissionAcceptEdits');
       case 'full_access':
@@ -2453,9 +2466,29 @@ export function ChatView() {
       default:
         return t('common.permissionDefault');
     }
-  }, [currentAgentSession?.permission_mode, t]);
-  const isAgentRunning = Boolean(streaming || currentAgentStatus);
-  const agentRuntimeStatusLabel = isAgentRunning ? '运行中' : '待命';
+  }, [currentAgentProfile?.permissionMode, t]);
+  const isAgentRunning = Boolean(streaming || (currentAgentRun && ['queued', 'starting', 'running', 'waiting_approval', 'waiting_input', 'cancelling'].includes(currentAgentRun.status)));
+  const agentRuntimeStatusLabel = currentAgentRun?.status ?? (isAgentRunning ? 'running' : 'idle');
+  const currentAgentInterruptedReason = useMemo(() => {
+    if (!currentAgentRun || currentAgentRun.status !== 'interrupted') return null;
+    if (currentAgentRun.interruptedReason) return currentAgentRun.interruptedReason;
+    const interruptedEvent = [...currentAgentRunEvents].reverse().find((event) => event.eventType === 'run_interrupted');
+    if (!interruptedEvent) return null;
+    try {
+      const payload = JSON.parse(interruptedEvent.payloadJson) as { reason?: string };
+      return payload.reason ?? null;
+    } catch {
+      return null;
+    }
+  }, [currentAgentRun, currentAgentRunEvents]);
+  const handleResumeAgentRun = useCallback(() => {
+    if (!currentAgentRun) return;
+    void resumeAgentRun(currentAgentRun.id);
+  }, [currentAgentRun, resumeAgentRun]);
+  const handleReplayAgentRun = useCallback(() => {
+    if (!currentAgentRun?.promptSnapshot) return;
+    void useConversationStore.getState().sendAgentMessage(currentAgentRun.promptSnapshot);
+  }, [currentAgentRun]);
 
   const agentToolCalls = useAgentStore((s) => s.toolCalls);
   const agentPendingPermissions = useAgentStore((s) => s.pendingPermissions);
@@ -3947,9 +3980,9 @@ export function ChatView() {
                 {activeAgentExecutorModel}
               </Tag>
             )}
-            <Tooltip title={currentAgentSession?.cwd || 'No workspace selected'}>
+            <Tooltip title={currentAgentProfile?.workspaceRoot || 'No workspace selected'}>
               <Tag style={{ margin: 0, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {abbreviateAgentPath(currentAgentSession?.cwd)}
+                {abbreviateAgentPath(currentAgentProfile?.workspaceRoot)}
               </Tag>
             </Tooltip>
             <Tag style={{ margin: 0 }}>
@@ -4015,18 +4048,50 @@ export function ChatView() {
         </div>
 
         {/* Agent status bar */}
-        {currentAgentStatus && (
+        {(currentAgentStatus || currentAgentRun) && (
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 8,
+              flexWrap: 'wrap',
               padding: '2px 28px 8px',
               fontSize: 13,
               color: token.colorTextSecondary,
             }}
           >
-            <Spin size="small" /> {currentAgentStatus}
+            {isAgentRunning && <Spin size="small" />}
+            <Tag color={isAgentRunning ? 'processing' : currentAgentRun?.status === 'interrupted' ? 'warning' : 'default'} style={{ margin: 0 }}>
+              {agentRuntimeStatusLabel}
+            </Tag>
+            {currentAgentRun?.runnerKind && (
+              <Tag style={{ margin: 0 }}>{currentAgentRun.runnerKind}</Tag>
+            )}
+            {currentAgentStatus && <Typography.Text type="secondary">{currentAgentStatus}</Typography.Text>}
+            {currentAgentRun?.status === 'interrupted' && currentAgentInterruptedReason && (
+              <Typography.Text type="warning">
+                {currentAgentInterruptedReason}
+              </Typography.Text>
+            )}
+            {canResumeCurrentAgentRun && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<RotateCcw size={13} />}
+                onClick={handleResumeAgentRun}
+              >
+                Resume
+              </Button>
+            )}
+            {canReplayCurrentAgentRun && (
+              <Button
+                size="small"
+                icon={<RotateCcw size={13} />}
+                onClick={handleReplayAgentRun}
+              >
+                Re-run
+              </Button>
+            )}
           </div>
         )}
 

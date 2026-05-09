@@ -1,8 +1,11 @@
 import { useMemo } from 'react';
 import { Tabs, Empty, List, Descriptions, Tag, Typography, theme } from 'antd';
-import { Search, Wrench, Paperclip, Info, FileText } from 'lucide-react';
+import { Search, Wrench, Paperclip, Info, FileText, Activity } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useConversationStore, useArtifactStore } from '@/stores';
+import { useConversationStore, useArtifactStore, useAgentStore } from '@/stores';
+
+const EMPTY_AGENT_RUNS: readonly [] = [];
+const EMPTY_AGENT_RUN_EVENTS: readonly [] = [];
 
 interface ChatInspectorProps {
   visible: boolean;
@@ -26,6 +29,18 @@ export function ChatInspector({
   const workspaceSnapshot = useConversationStore((s) => s.workspaceSnapshot);
   const messages = useConversationStore((s) => s.messages);
   const { artifacts } = useArtifactStore();
+  const agentProfile = useAgentStore((s) =>
+    conversationId ? s.profilesByConversation[conversationId] : undefined,
+  );
+  const agentRuns = useAgentStore((s) =>
+    conversationId ? s.runsByConversation[conversationId] ?? EMPTY_AGENT_RUNS : EMPTY_AGENT_RUNS,
+  );
+  const agentRunEvents = useAgentStore((s) => {
+    if (!conversationId) return EMPTY_AGENT_RUN_EVENTS;
+    const latestRunId = s.runsByConversation[conversationId]?.[0]?.id;
+    return latestRunId ? s.runEventsByRunId[latestRunId] ?? EMPTY_AGENT_RUN_EVENTS : EMPTY_AGENT_RUN_EVENTS;
+  });
+  const latestRun = agentRuns[0];
 
   const contextSources = useMemo(() => {
     if (!workspaceSnapshot) return [];
@@ -50,22 +65,44 @@ export function ChatInspector({
   }, [workspaceSnapshot]);
 
   const toolCalls = useMemo(() => {
-    return messages
-      .filter((m) => m.role === 'assistant' && m.content)
-      .flatMap((m) => {
-        const calls: { name: string; messageId: string }[] = [];
-        const regex = /tool_call|function_call|<tool>(.*?)<\/tool>/g;
-        if (regex.test(m.content)) {
-          calls.push({ name: 'tool_call', messageId: m.id });
+    return agentRunEvents
+      .filter((event) => event.eventType === 'tool_use' || event.eventType === 'tool_result')
+      .map((event) => {
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = JSON.parse(event.payloadJson) as Record<string, unknown>;
+        } catch {
+          payload = {};
         }
-        return calls;
+        return {
+          name: String(payload.toolName ?? event.eventType),
+          messageId: String(payload.assistantMessageId ?? event.runId),
+        };
       });
-  }, [messages]);
+  }, [agentRunEvents]);
 
   const conversationArtifacts = useMemo(() => {
     if (!conversationId) return [];
     return artifacts.filter((a) => a.conversationId === conversationId);
   }, [artifacts, conversationId]);
+
+  const runTimeline = useMemo(() => {
+    return agentRunEvents.map((event) => {
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(event.payloadJson) as Record<string, unknown>;
+      } catch {
+        payload = {};
+      }
+      const title = String(payload.toolName ?? payload.message ?? event.eventType);
+      return {
+        id: event.id,
+        type: event.eventType,
+        title,
+        createdAt: event.createdAt,
+      };
+    });
+  }, [agentRunEvents]);
 
   const tabItems = useMemo(
     () => [
@@ -150,10 +187,16 @@ export function ChatInspector({
               </Typography.Text>
             </Descriptions.Item>
             <Descriptions.Item label={t('gateway.defaultProvider')}>
-              {conversation.provider_id || '-'}
+              {agentRuns[0]?.providerId || conversation.provider_id || '-'}
             </Descriptions.Item>
             <Descriptions.Item label={t('gateway.defaultModel')}>
-              {conversation.model_id || '-'}
+              {agentRuns[0]?.modelId || conversation.model_id || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('common.status', '状态')}>
+              {agentRuns[0]?.status || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('common.permission', '权限')}>
+              {agentProfile?.permissionMode || '-'}
             </Descriptions.Item>
             <Descriptions.Item label={t('gateway.created')}>
               {new Date(conversation.created_at).toLocaleString()}
@@ -162,6 +205,63 @@ export function ChatInspector({
               {conversation.message_count}
             </Descriptions.Item>
           </Descriptions>
+        ) : (
+          <Empty
+            description={t('common.noData')}
+            style={{ marginTop: 48 }}
+          />
+        ),
+      },
+      {
+        key: 'run',
+        label: 'Run',
+        icon: <Activity size={14} />,
+        children: latestRun ? (
+          <div style={{ padding: '8px 0' }}>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="Status">
+                <Tag>{latestRun.status}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Runner">
+                {latestRun.runnerKind}
+              </Descriptions.Item>
+              <Descriptions.Item label="Resume">
+                {latestRun.resumeCapability || 'none'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Interrupted">
+                {latestRun.interruptedReason || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Started">
+                {latestRun.startedAt}
+              </Descriptions.Item>
+              <Descriptions.Item label="Finished">
+                {latestRun.finishedAt || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Cost">
+                {latestRun.costUsd ? `$${latestRun.costUsd.toFixed(4)}` : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Error">
+                {latestRun.errorSummary || '-'}
+              </Descriptions.Item>
+            </Descriptions>
+            <List
+              size="small"
+              dataSource={runTimeline}
+              style={{ marginTop: 12 }}
+              renderItem={(item) => (
+                <List.Item>
+                  <List.Item.Meta
+                    title={<Typography.Text>{item.type}</Typography.Text>}
+                    description={
+                      <Typography.Text type="secondary" ellipsis>
+                        {item.title}
+                      </Typography.Text>
+                    }
+                  />
+                </List.Item>
+              )}
+            />
+          </div>
         ) : (
           <Empty
             description={t('common.noData')}
@@ -194,7 +294,7 @@ export function ChatInspector({
         ),
       },
     ],
-    [t, conversationId, contextSources, toolCalls, messages, conversation, conversationArtifacts],
+    [t, conversationId, contextSources, toolCalls, messages, conversation, conversationArtifacts, agentRuns, agentProfile, latestRun, runTimeline],
   );
 
   return (

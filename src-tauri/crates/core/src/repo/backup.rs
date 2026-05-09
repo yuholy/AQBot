@@ -134,10 +134,7 @@ async fn create_full_zip_backup(
     create_sqlite_backup(db, &temp_db_path).await?;
 
     let documents_dir = storage_paths::documents_root();
-    let workspace_dir = app_data_dir
-        .parent()
-        .unwrap_or(app_data_dir)
-        .join("workspace");
+    let workspace_dir = workspace_dir_for_backup(app_data_dir);
     let master_key_path = app_data_dir.join("master.key");
     let object_counts = count_objects(db).await?;
 
@@ -145,7 +142,9 @@ async fn create_full_zip_backup(
         &temp_db_path,
         documents_dir.exists().then_some(documents_dir.as_path()),
         workspace_dir.exists().then_some(workspace_dir.as_path()),
-        master_key_path.exists().then_some(master_key_path.as_path()),
+        master_key_path
+            .exists()
+            .then_some(master_key_path.as_path()),
         Some(app_data_dir),
         dest_zip,
         env!("CARGO_PKG_VERSION"),
@@ -156,6 +155,10 @@ async fn create_full_zip_backup(
     result?;
 
     Ok(())
+}
+
+fn workspace_dir_for_backup(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("workspace")
 }
 
 /// Create a SQLite backup using VACUUM INTO
@@ -318,9 +321,8 @@ pub fn stage_restore(
         })?;
     }
 
-    std::fs::copy(source_db, staging_db).map_err(|e| {
-        AQBotError::Gateway(format!("Failed to stage database restore: {}", e))
-    })?;
+    std::fs::copy(source_db, staging_db)
+        .map_err(|e| AQBotError::Gateway(format!("Failed to stage database restore: {}", e)))?;
 
     let staged_key = match (source_master_key, staging_master_key) {
         (Some(src), Some(dst)) => {
@@ -399,7 +401,10 @@ pub fn apply_staged_restore(app_data_dir: &Path, db_file_path: &Path, master_key
                 return;
             }
         } else {
-            tracing::warn!("Staged master.key file is missing: {}", staged_key.display());
+            tracing::warn!(
+                "Staged master.key file is missing: {}",
+                staged_key.display()
+            );
         }
     }
 
@@ -438,7 +443,7 @@ pub async fn cleanup_old_backups(db: &DatabaseConnection, max_count: u32) -> Res
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_backup_dir;
+    use super::{resolve_backup_dir, workspace_dir_for_backup};
     use std::path::PathBuf;
 
     #[test]
@@ -446,14 +451,8 @@ mod tests {
         let aqbot_home = PathBuf::from("/Users/test/.aqbot");
         let expected = crate::storage_paths::default_documents_root().join("backups");
 
-        assert_eq!(
-            resolve_backup_dir(None, &aqbot_home),
-            expected
-        );
-        assert_eq!(
-            resolve_backup_dir(Some(""), &aqbot_home),
-            expected
-        );
+        assert_eq!(resolve_backup_dir(None, &aqbot_home), expected);
+        assert_eq!(resolve_backup_dir(Some(""), &aqbot_home), expected);
     }
 
     #[test]
@@ -464,6 +463,16 @@ mod tests {
         assert_eq!(
             resolve_backup_dir(Some(override_dir.to_str().unwrap()), &aqbot_home),
             override_dir
+        );
+    }
+
+    #[test]
+    fn workspace_backup_dir_stays_under_aqbot_home() {
+        let aqbot_home = PathBuf::from("/Users/test/.aqbot");
+
+        assert_eq!(
+            workspace_dir_for_backup(&aqbot_home),
+            aqbot_home.join("workspace")
         );
     }
 }

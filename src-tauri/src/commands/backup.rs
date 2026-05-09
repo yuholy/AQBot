@@ -364,8 +364,34 @@ fn copy_directory(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
         if entry.file_type()?.is_dir() {
             copy_directory(&entry.path(), &target)?;
         } else {
-            std::fs::copy(entry.path(), &target)?;
+            copy_file_overwrite(&entry.path(), &target)?;
         }
+    }
+    Ok(())
+}
+
+fn copy_file_overwrite(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if dst.exists() {
+        clear_readonly_if_needed(dst)?;
+        std::fs::remove_file(dst)?;
+    }
+
+    std::fs::copy(src, dst)?;
+    Ok(())
+}
+
+fn clear_readonly_if_needed(path: &std::path::Path) -> std::io::Result<()> {
+    let metadata = std::fs::metadata(path)?;
+    let permissions = metadata.permissions();
+    if permissions.readonly() {
+        #[allow(unused_mut)]
+        let mut updated = permissions;
+        updated.set_readonly(false);
+        std::fs::set_permissions(path, updated)?;
     }
     Ok(())
 }

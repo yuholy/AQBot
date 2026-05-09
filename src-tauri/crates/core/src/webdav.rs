@@ -604,7 +604,11 @@ fn add_directory_to_zip<W: Write + std::io::Seek>(
     Ok(())
 }
 
-fn collect_files(dir: &Path, files: &mut Vec<std::path::PathBuf>, excluded_paths: &[PathBuf]) -> Result<()> {
+fn collect_files(
+    dir: &Path,
+    files: &mut Vec<std::path::PathBuf>,
+    excluded_paths: &[PathBuf],
+) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -831,8 +835,17 @@ mod tests {
         std::fs::write(&db_path, b"db").unwrap();
 
         let dest_zip = backups_dir.join("new-backup.zip");
-        create_backup_zip(&db_path, Some(&docs_dir), None, None, None, &dest_zip, "test", "{}")
-            .unwrap();
+        create_backup_zip(
+            &db_path,
+            Some(&docs_dir),
+            None,
+            None,
+            None,
+            &dest_zip,
+            "test",
+            "{}",
+        )
+        .unwrap();
 
         let file = std::fs::File::open(&dest_zip).unwrap();
         let mut archive = zip::ZipArchive::new(file).unwrap();
@@ -843,7 +856,9 @@ mod tests {
 
         assert!(names.iter().any(|name| name == "documents/keep.txt"));
         assert!(
-            names.iter().all(|name| !name.starts_with("documents/backups/")),
+            names
+                .iter()
+                .all(|name| !name.starts_with("documents/backups/")),
             "backup archives should not include nested backups: {names:?}"
         );
     }

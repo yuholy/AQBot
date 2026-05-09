@@ -1,3 +1,5 @@
+pub mod agent_profile;
+pub mod agent_run;
 pub mod agent_session;
 pub mod artifact;
 pub mod backup;

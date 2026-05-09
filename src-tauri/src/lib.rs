@@ -33,6 +33,7 @@ pub struct AppState {
         Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
 }
 
+mod agent_runtime;
 mod commands;
 mod context_manager;
 mod external_agents;
@@ -313,6 +314,14 @@ pub fn run() {
             commands::agent::agent_cancel,
             commands::agent::agent_update_session,
             commands::agent::agent_get_session,
+            commands::agent::agent_get_profile,
+            commands::agent::agent_update_profile,
+            commands::agent::agent_start_run,
+            commands::agent::agent_get_run,
+            commands::agent::agent_list_runs,
+            commands::agent::agent_list_run_events,
+            commands::agent::agent_control_run,
+            commands::agent::agent_resume_run,
             commands::agent::agent_ensure_workspace,
             commands::agent::agent_approve,
             commands::agent::agent_respond_ask,
@@ -502,6 +511,8 @@ pub fn run() {
             {
                 let sea_db = app.state::<AppState>().sea_db.clone();
                 let _ = rt.block_on(aqbot_core::repo::agent_session::reset_running_sessions(&sea_db));
+                let _ = rt.block_on(aqbot_core::repo::agent_profile::migrate_existing_sessions_to_profiles(&sea_db));
+                let _ = rt.block_on(aqbot_core::repo::agent_run::mark_incomplete_runs_interrupted(&sea_db));
             }
 
             if let Some(main_window) = app.get_webview_window("main") {

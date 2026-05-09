@@ -1179,6 +1179,70 @@ pub struct ToolExecution {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentProfile {
+    pub id: String,
+    pub conversation_id: String,
+    pub workspace_root: Option<String>,
+    pub permission_mode: String,
+    pub default_runner_kind: String,
+    pub default_provider_id: Option<String>,
+    pub default_model_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRun {
+    pub id: String,
+    pub conversation_id: String,
+    pub profile_id: String,
+    pub runner_kind: String,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub status: String,
+    pub prompt_snapshot: String,
+    pub sdk_context_json: Option<String>,
+    pub workspace_root: Option<String>,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub error_summary: Option<String>,
+    pub token_usage_json: Option<String>,
+    pub cost_usd: f64,
+    pub resume_capability: String,
+    pub interrupted_reason: Option<String>,
+    pub resume_token_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunStep {
+    pub id: String,
+    pub run_id: String,
+    pub parent_step_id: Option<String>,
+    pub step_kind: String,
+    pub status: String,
+    pub title: Option<String>,
+    pub input_json: Option<String>,
+    pub output_json: Option<String>,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunEvent {
+    pub id: String,
+    pub run_id: String,
+    pub step_id: Option<String>,
+    pub event_type: String,
+    pub payload_json: String,
+    pub sequence_no: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentSession {
     pub id: String,
     pub conversation_id: String,

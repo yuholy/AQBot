@@ -1,765 +1,50 @@
+use super::event::AgentEventRecorder;
 use crate::agent_runtime::compat::{
-    ensure_agent_assistant_message, ensure_legacy_session_for_profile, RunningAgentGuard,
+    create_adapter_arc, ensure_agent_assistant_message, ensure_legacy_session_for_profile,
+    get_tool_input_summary, persist_agent_partial_content, provider_type_to_registry_key,
+    resolve_agent_provider_id, truncate_preview, AgentCancelTokenGuard, RunningAgentGuard,
     RUNNING_AGENTS,
 };
-use crate::agent_runtime::payloads::AgentDonePayload;
+use crate::agent_runtime::payloads::{
+    AgentAskUserPayload, AgentDonePayload, AgentErrorPayload, AgentPermissionRequestPayload,
+    AgentRateLimitPayload, AgentStatusPayload, AgentTextPayload, AgentThinkingPayload,
+    AgentToolResultPayload, AgentToolStartPayload, AgentToolUsePayload, AgentUsagePayload,
+};
 use crate::AppState;
-use aqbot_core::repo::{agent_profile, agent_run, agent_session, conversation, message};
-use aqbot_core::types::{AgentProfile, AgentRun, AgentRunEvent, AgentSession, MessageRole};
-use serde::{Deserialize, Serialize};
+use aqbot_agent::permission::{classify_tool_risk_with_input, decide_permission, PermissionAction};
+use aqbot_core::repo::{
+    agent_run, agent_session, conversation, message, provider, settings, skill, tool_execution,
+};
+use aqbot_core::types::{MessageRole, ProviderProxyConfig};
+use aqbot_providers::{resolve_base_url_for_type, ProviderRequestContext};
+use open_agent_sdk::{
+    Agent, AgentOptions, CanUseToolFn, ContentBlock, PermissionDecision, SDKMessage, Usage,
+};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{Emitter, State};
+use tauri::Emitter;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentProfileUpdateInput {
-    pub conversation_id: String,
-    pub workspace_root: Option<String>,
-    pub permission_mode: Option<String>,
-    pub default_runner_kind: Option<String>,
-    pub default_provider_id: Option<String>,
-    pub default_model_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentStartRunInput {
+#[derive(Debug, Clone)]
+pub struct StartSdkRunInput {
     pub conversation_id: String,
     pub prompt: String,
-    pub runner_kind: Option<String>,
-    pub provider_id: Option<String>,
-    pub model_id: Option<String>,
-    pub cwd: Option<String>,
-    pub permission_mode: Option<String>,
+    pub provider_id: String,
+    pub model_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentControlRunInput {
-    pub run_id: String,
-    pub action: String,
-    pub target_id: Option<String>,
-    pub value: Option<String>,
-    pub conversation_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentRunLifecyclePayload {
-    conversation_id: String,
-    run_id: String,
-    status: Option<String>,
-    resume_capability: Option<String>,
-    interrupted_reason: Option<String>,
-    message: Option<String>,
-}
-
-fn runner_kind_from_legacy(executor: &str) -> crate::agent_runtime::runner::AgentRunnerKind {
-    crate::agent_runtime::runner::AgentRunnerKind::from_str(executor)
-}
-
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub async fn agent_get_profile(
-    state: State<'_, AppState>,
-    conversation_id: String,
-) -> Result<AgentProfile, String> {
-    crate::agent_runtime::profile::get_or_create_profile(&state.sea_db, &conversation_id).await
-}
-
-#[tauri::command]
-pub async fn agent_update_profile(
-    state: State<'_, AppState>,
-    input: AgentProfileUpdateInput,
-) -> Result<AgentProfile, String> {
-    let profile = agent_profile::upsert_profile(
-        &state.sea_db,
-        &input.conversation_id,
-        input.workspace_root.as_deref(),
-        input.permission_mode.as_deref(),
-        input.default_runner_kind.as_deref(),
-        input.default_provider_id.as_deref(),
-        input.default_model_id.as_deref(),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let _ = ensure_legacy_session_for_profile(&state.sea_db, &profile).await;
-    Ok(profile)
-}
-
-#[tauri::command]
-pub async fn agent_start_run(
+pub async fn start_sdk_run(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    input: AgentStartRunInput,
+    state: &AppState,
+    input: StartSdkRunInput,
 ) -> Result<(), String> {
-    let runner_kind = runner_kind_from_legacy(input.runner_kind.as_deref().unwrap_or("sdk"));
-    match runner_kind {
-        crate::agent_runtime::runner::AgentRunnerKind::ClaudeCode => {
-            agent_query_claude_code(
-                app,
-                state,
-                input.conversation_id,
-                input.prompt,
-                input.cwd,
-                input.permission_mode,
-                input.model_id,
-            )
-            .await
-        }
-        crate::agent_runtime::runner::AgentRunnerKind::DeepseekTui => {
-            agent_query_deepseek_tui(
-                app,
-                state,
-                input.conversation_id,
-                input.prompt,
-                input.cwd,
-                input.permission_mode,
-                input.model_id,
-            )
-            .await
-        }
-        crate::agent_runtime::runner::AgentRunnerKind::Sdk => {
-            let provider_id = input
-                .provider_id
-                .ok_or("providerId is required for sdk runner".to_string())?;
-            let model_id = input
-                .model_id
-                .ok_or("modelId is required for sdk runner".to_string())?;
-            agent_query(
-                app,
-                state,
-                input.conversation_id,
-                input.prompt,
-                provider_id,
-                model_id,
-            )
-            .await
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn agent_get_run(
-    state: State<'_, AppState>,
-    run_id: String,
-) -> Result<Option<AgentRun>, String> {
-    agent_run::get_run(&state.sea_db, &run_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn agent_list_runs(
-    state: State<'_, AppState>,
-    conversation_id: String,
-) -> Result<Vec<AgentRun>, String> {
-    agent_run::list_runs_for_conversation(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn agent_list_run_events(
-    state: State<'_, AppState>,
-    run_id: String,
-) -> Result<Vec<AgentRunEvent>, String> {
-    agent_run::list_run_events(&state.sea_db, &run_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn agent_control_run(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    input: AgentControlRunInput,
-) -> Result<(), String> {
-    let run = agent_run::get_run(&state.sea_db, &input.run_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("Agent run not found".to_string())?;
-
-    match input.action.as_str() {
-        "cancel" => agent_cancel(app, state, run.conversation_id).await,
-        "resume" => agent_resume_run(app, state, input.run_id).await,
-        "approve" => {
-            let tool_use_id = input
-                .target_id
-                .ok_or("targetId is required for approve".to_string())?;
-            agent_approve(
-                state,
-                run.conversation_id,
-                tool_use_id,
-                input.value.unwrap_or_else(|| "allow_once".to_string()),
-            )
-            .await
-        }
-        "deny" => {
-            let tool_use_id = input
-                .target_id
-                .ok_or("targetId is required for deny".to_string())?;
-            agent_approve(state, run.conversation_id, tool_use_id, "deny".to_string()).await
-        }
-        "answer" => {
-            let ask_id = input
-                .target_id
-                .ok_or("targetId is required for answer".to_string())?;
-            let answer = input
-                .value
-                .ok_or("value is required for answer".to_string())?;
-            agent_respond_ask(state, ask_id, answer).await
-        }
-        other => Err(format!("Unsupported agent control action: {}", other)),
-    }
-}
-
-#[tauri::command]
-pub async fn agent_resume_run(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    run_id: String,
-) -> Result<(), String> {
-    let run = agent_run::get_run(&state.sea_db, &run_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("Agent run not found".to_string())?;
-
-    if run.status != "interrupted" {
-        return Err("Only interrupted runs can be resumed".to_string());
-    }
-
-    let resume_decision =
-        crate::agent_runtime::runtime::prepare_resume(&state.sea_db, &run).await?;
-    let _ = app.emit(
-        "agent-run-event",
-        AgentRunLifecyclePayload {
-            conversation_id: run.conversation_id.clone(),
-            run_id: run.id.clone(),
-            status: Some(if resume_decision.accepted {
-                "running".to_string()
-            } else {
-                "interrupted".to_string()
-            }),
-            resume_capability: Some(run.resume_capability.clone()),
-            interrupted_reason: run.interrupted_reason.clone(),
-            message: Some(resume_decision.message.clone()),
-        },
-    );
-    if !resume_decision.accepted {
-        return Err(resume_decision.message);
-    }
-
-    match run.runner_kind.as_str() {
-        "sdk" => {
-            let provider_id = run
-                .provider_id
-                .clone()
-                .ok_or("Interrupted SDK run is missing provider_id".to_string())?;
-            let model_id = run
-                .model_id
-                .clone()
-                .ok_or("Interrupted SDK run is missing model_id".to_string())?;
-            agent_query(
-                app,
-                state,
-                run.conversation_id,
-                run.prompt_snapshot,
-                provider_id,
-                model_id,
-            )
-            .await
-        }
-        _ => Err("This runner does not support resume".to_string()),
-    }
-}
-
-#[tauri::command]
-pub async fn agent_query_claude_code(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    conversation_id: String,
-    prompt: String,
-    cwd: Option<String>,
-    permission_mode: Option<String>,
-    model: Option<String>,
-) -> Result<(), String> {
-    if prompt.trim().is_empty() {
-        return Err("Prompt is empty".to_string());
-    }
-
-    let profile = crate::agent_runtime::profile::update_profile_from_legacy_inputs(
-        &state.sea_db,
-        &conversation_id,
-        cwd.as_deref(),
-        permission_mode.as_deref(),
-    )
-    .await?;
-    let session = ensure_legacy_session_for_profile(&state.sea_db, &profile).await?;
-
-    crate::agent_runtime::runtime::ensure_no_active_run(&state.sea_db, &conversation_id).await?;
-
-    {
-        let running = RUNNING_AGENTS.lock().unwrap();
-        if running.contains_key(&conversation_id) {
-            return Err("Agent is already running".to_string());
-        }
-    }
-
-    agent_session::update_agent_session_status(&state.sea_db, &session.id, "running")
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let run = match crate::agent_runtime::runtime::start_run(
-        &state.sea_db,
-        &conversation_id,
-        crate::agent_runtime::runner::AgentRunnerKind::ClaudeCode,
-        &prompt,
-        None,
-        model.as_deref(),
-        None,
-    )
-    .await
-    {
-        Ok((_, run)) => run,
-        Err(err) => {
-            let _ = agent_session::update_agent_session_status(&state.sea_db, &session.id, "idle")
-                .await;
-            return Err(err);
-        }
-    };
-
-    let user_message = message::create_message(
-        &state.sea_db,
-        &conversation_id,
-        MessageRole::User,
-        &prompt,
-        &[],
-        None,
-        0,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let pre_conv = conversation::get_conversation(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let is_first_message = pre_conv.message_count <= 1;
-
-    conversation::increment_message_count(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if is_first_message {
-        let fallback_title = if prompt.chars().count() > 30 {
-            format!("{}...", prompt.chars().take(30).collect::<String>())
-        } else {
-            prompt.clone()
-        };
-        if conversation::update_conversation_title(&state.sea_db, &conversation_id, &fallback_title)
-            .await
-            .is_ok()
-        {
-            let _ = app.emit(
-                "conversation-title-updated",
-                aqbot_core::types::ConversationTitleUpdatedEvent {
-                    conversation_id: conversation_id.clone(),
-                    title: fallback_title,
-                },
-            );
-        }
-    }
-
-    let effective_cwd = cwd.or(session.cwd.clone()).filter(|s| !s.trim().is_empty());
-    let effective_permission_mode =
-        crate::agent_runtime::cli_runner::map_claude_code_permission_mode(
-            permission_mode.as_deref(),
-        )
-        .to_string();
-
-    let run_guard_id = aqbot_core::utils::gen_id();
-    {
-        let mut running = RUNNING_AGENTS.lock().unwrap();
-        running.insert(conversation_id.clone(), run_guard_id.clone());
-    }
-
-    let db = state.sea_db.clone();
-    let session_id = session.id.clone();
-    let conv_id = conversation_id.clone();
-    let user_msg_id = user_message.id.clone();
-    let assistant_created_at = user_message.created_at + 1;
-
-    tokio::spawn(async move {
-        let _running_guard = RunningAgentGuard {
-            conversation_id: conv_id.clone(),
-            run_id: run_guard_id,
-        };
-        let recorder = crate::agent_runtime::event::AgentEventRecorder::new(run.id.clone());
-        let _ = agent_run::update_run_status(&db, &run.id, "running", None).await;
-        let _ = recorder
-            .append(
-                &db,
-                None,
-                "run_started",
-                &serde_json::json!({
-                    "conversationId": conv_id.clone(),
-                    "runnerKind": "claude_code",
-                    "model": model.clone(),
-                }),
-            )
-            .await;
-
-        let mut current_assistant_msg_id: Option<String> = None;
-        let assistant_id_for_task: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
-        let _ = ensure_agent_assistant_message(
-            &db,
-            &app,
-            &conv_id,
-            &user_msg_id,
-            assistant_created_at,
-            "",
-            &mut current_assistant_msg_id,
-            &assistant_id_for_task,
-        )
-        .await;
-
-        let final_text = crate::agent_runtime::cli_runner::run_claude_code_once(
-            &prompt,
-            effective_cwd.as_deref(),
-            Some(&effective_permission_mode),
-            model.as_deref(),
-        )
-        .await;
-
-        if let Some(ref mid) = current_assistant_msg_id {
-            let _ = message::update_message_content(&db, mid, &final_text).await;
-        }
-
-        let final_status = if final_text.contains("failed") || final_text.contains("timed out") {
-            "failed"
-        } else {
-            "completed"
-        };
-        let _ = recorder
-            .append(
-                &db,
-                None,
-                "run_finished",
-                &serde_json::json!({
-                    "status": final_status,
-                    "assistantMessageId": current_assistant_msg_id.clone(),
-                    "text": final_text.clone(),
-                }),
-            )
-            .await;
-        let _ = agent_run::finish_run(
-            &db,
-            &run.id,
-            final_status,
-            None,
-            None,
-            0.0,
-            if final_status == "failed" {
-                Some(final_text.as_str())
-            } else {
-                None
-            },
-        )
-        .await;
-
-        let _ = app.emit(
-            "agent-done",
-            AgentDonePayload {
-                conversation_id: conv_id.clone(),
-                assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
-                text: final_text,
-                thinking: None,
-                model: model.clone(),
-                session_id: None,
-                usage: None,
-                num_turns: Some(1),
-                cost_usd: None,
-            },
-        );
-
-        let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn agent_query_deepseek_tui(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    conversation_id: String,
-    prompt: String,
-    cwd: Option<String>,
-    permission_mode: Option<String>,
-    model: Option<String>,
-) -> Result<(), String> {
-    if prompt.trim().is_empty() {
-        return Err("Prompt is empty".to_string());
-    }
-
-    let profile = crate::agent_runtime::profile::update_profile_from_legacy_inputs(
-        &state.sea_db,
-        &conversation_id,
-        cwd.as_deref(),
-        permission_mode.as_deref(),
-    )
-    .await?;
-    let session = ensure_legacy_session_for_profile(&state.sea_db, &profile).await?;
-
-    crate::agent_runtime::runtime::ensure_no_active_run(&state.sea_db, &conversation_id).await?;
-
-    {
-        let running = RUNNING_AGENTS.lock().unwrap();
-        if running.contains_key(&conversation_id) {
-            return Err("Agent is already running".to_string());
-        }
-    }
-
-    agent_session::update_agent_session_status(&state.sea_db, &session.id, "running")
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let run = match crate::agent_runtime::runtime::start_run(
-        &state.sea_db,
-        &conversation_id,
-        crate::agent_runtime::runner::AgentRunnerKind::DeepseekTui,
-        &prompt,
-        None,
-        model.as_deref(),
-        session.sdk_context_json.as_deref(),
-    )
-    .await
-    {
-        Ok((_, run)) => run,
-        Err(err) => {
-            let _ = agent_session::update_agent_session_status(&state.sea_db, &session.id, "idle")
-                .await;
-            return Err(err);
-        }
-    };
-
-    let user_message = message::create_message(
-        &state.sea_db,
-        &conversation_id,
-        MessageRole::User,
-        &prompt,
-        &[],
-        None,
-        0,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let pre_conv = conversation::get_conversation(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let is_first_message = pre_conv.message_count <= 1;
-
-    conversation::increment_message_count(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if is_first_message {
-        let fallback_title = if prompt.chars().count() > 30 {
-            format!("{}...", prompt.chars().take(30).collect::<String>())
-        } else {
-            prompt.clone()
-        };
-        if conversation::update_conversation_title(&state.sea_db, &conversation_id, &fallback_title)
-            .await
-            .is_ok()
-        {
-            let _ = app.emit(
-                "conversation-title-updated",
-                aqbot_core::types::ConversationTitleUpdatedEvent {
-                    conversation_id: conversation_id.clone(),
-                    title: fallback_title,
-                },
-            );
-        }
-    }
-
-    let effective_cwd = cwd.or(session.cwd.clone()).filter(|s| !s.trim().is_empty());
-    let auto_mode = matches!(
-        permission_mode.as_deref(),
-        Some("accept_edits" | "acceptEdits" | "full_access" | "bypassPermissions" | "auto")
-    );
-
-    let run_guard_id = aqbot_core::utils::gen_id();
-    {
-        let mut running = RUNNING_AGENTS.lock().unwrap();
-        running.insert(conversation_id.clone(), run_guard_id.clone());
-    }
-
-    let db = state.sea_db.clone();
-    let session_id = session.id.clone();
-    let conv_id = conversation_id.clone();
-    let user_msg_id = user_message.id.clone();
-    let assistant_created_at = user_message.created_at + 1;
-    let deepseek_ctx = crate::agent_runtime::cli_runner::load_deepseek_session_context(
-        session.sdk_context_json.as_deref(),
-    );
-    let saved_deepseek_session_id = deepseek_ctx.deepseek_session_id.clone();
-
-    tokio::spawn(async move {
-        let _running_guard = RunningAgentGuard {
-            conversation_id: conv_id.clone(),
-            run_id: run_guard_id,
-        };
-        let recorder = crate::agent_runtime::event::AgentEventRecorder::new(run.id.clone());
-        let _ = agent_run::update_run_status(&db, &run.id, "running", None).await;
-        let _ = recorder
-            .append(
-                &db,
-                None,
-                "run_started",
-                &serde_json::json!({
-                    "conversationId": conv_id.clone(),
-                    "runnerKind": "deepseek_tui",
-                    "model": model.clone(),
-                }),
-            )
-            .await;
-
-        let mut current_assistant_msg_id: Option<String> = None;
-        let assistant_id_for_task: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
-        let _ = ensure_agent_assistant_message(
-            &db,
-            &app,
-            &conv_id,
-            &user_msg_id,
-            assistant_created_at,
-            "",
-            &mut current_assistant_msg_id,
-            &assistant_id_for_task,
-        )
-        .await;
-
-        let (final_text, final_thinking, final_model, resolved_session_id, session_context_json) =
-            crate::agent_runtime::cli_runner::run_deepseek_tui_once(
-                &prompt,
-                effective_cwd.as_deref(),
-                auto_mode,
-                model.as_deref(),
-                saved_deepseek_session_id.as_deref(),
-            )
-            .await;
-
-        if let Some(ref mid) = current_assistant_msg_id {
-            let final_content = crate::agent_runtime::cli_runner::build_agent_content_with_thinking(
-                &final_text,
-                final_thinking.as_deref(),
-            );
-            let _ = message::update_message_content_and_thinking(
-                &db,
-                mid,
-                &final_content,
-                final_thinking.as_deref(),
-            )
-            .await;
-        }
-
-        let final_status = if final_text.contains("failed") || final_text.contains("timed out") {
-            "failed"
-        } else {
-            "completed"
-        };
-        let token_usage_json = resolved_session_id
-            .as_ref()
-            .map(|_| serde_json::json!({ "total_tokens": 0 }).to_string());
-        let _ = recorder
-            .append(
-                &db,
-                None,
-                "run_finished",
-                &serde_json::json!({
-                    "status": final_status,
-                    "assistantMessageId": current_assistant_msg_id.clone(),
-                    "text": final_text.clone(),
-                    "thinking": final_thinking.clone(),
-                    "sessionId": resolved_session_id.clone(),
-                }),
-            )
-            .await;
-        let _ = agent_run::finish_run(
-            &db,
-            &run.id,
-            final_status,
-            session_context_json.as_deref(),
-            token_usage_json.as_deref(),
-            0.0,
-            if final_status == "failed" {
-                Some(final_text.as_str())
-            } else {
-                None
-            },
-        )
-        .await;
-
-        let _ = app.emit(
-            "agent-done",
-            AgentDonePayload {
-                conversation_id: conv_id.clone(),
-                assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
-                text: final_text,
-                thinking: final_thinking,
-                model: final_model,
-                session_id: resolved_session_id,
-                usage: None,
-                num_turns: Some(1),
-                cost_usd: None,
-            },
-        );
-
-        if let Some(ctx_json) = session_context_json.as_deref() {
-            let _ = agent_session::update_agent_session_after_query(
-                &db,
-                &session_id,
-                "idle",
-                Some(ctx_json),
-                0,
-                0.0,
-            )
-            .await;
-        } else {
-            let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
-        }
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn agent_query(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    conversation_id: String,
-    prompt: String,
-    provider_id: String,
-    model_id: String,
-) -> Result<(), String> {
-    crate::agent_runtime::sdk_runner::start_sdk_run(
-        app,
-        &state,
-        crate::agent_runtime::sdk_runner::StartSdkRunInput {
-            conversation_id,
-            prompt,
-            provider_id,
-            model_id,
-        },
-    )
-    .await
-    /*
+    let StartSdkRunInput {
+        conversation_id,
+        prompt,
+        provider_id,
+        model_id,
+    } = input;
 
     let profile =
         crate::agent_runtime::profile::get_or_create_profile(&state.sea_db, &conversation_id)
@@ -768,7 +53,6 @@ pub async fn agent_query(
 
     crate::agent_runtime::runtime::ensure_no_active_run(&state.sea_db, &conversation_id).await?;
 
-    // 2. Concurrent check 鈥?use in-memory set as source of truth
     {
         let running = RUNNING_AGENTS.lock().unwrap();
         if running.contains_key(&conversation_id) {
@@ -778,7 +62,6 @@ pub async fn agent_query(
 
     let real_provider_id = resolve_agent_provider_id(&state.sea_db, &provider_id).await?;
 
-    // 3. Set runtime_status to 'running'
     agent_session::update_agent_session_status(&state.sea_db, &session.id, "running")
         .await
         .map_err(|e| e.to_string())?;
@@ -802,7 +85,6 @@ pub async fn agent_query(
         }
     };
 
-    // 4. Save user message
     let user_message = message::create_message(
         &state.sea_db,
         &conversation_id,
@@ -815,7 +97,6 @@ pub async fn agent_query(
     .await
     .map_err(|e| e.to_string())?;
 
-    // Check if first message BEFORE incrementing
     let pre_conv = conversation::get_conversation(&state.sea_db, &conversation_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -825,7 +106,6 @@ pub async fn agent_query(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Auto-title: set fallback + async AI title for first message
     if is_first_message {
         let fallback_title = if prompt.chars().count() > 30 {
             format!("{}...", prompt.chars().take(30).collect::<String>())
@@ -851,7 +131,6 @@ pub async fn agent_query(
         }
     }
 
-    // 5. Get provider + key
     let prov = provider::get_provider(&state.sea_db, &real_provider_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -865,8 +144,7 @@ pub async fn agent_query(
         .ok()
         .and_then(|model| model.param_overrides);
 
-    // 6. Build ProviderRequestContext
-    let global_settings = aqbot_core::repo::settings::get_settings(&state.sea_db)
+    let global_settings = settings::get_settings(&state.sea_db)
         .await
         .unwrap_or_default();
     let resolved_proxy = ProviderProxyConfig::resolve(&prov.proxy_config, &global_settings);
@@ -886,7 +164,6 @@ pub async fn agent_query(
             .and_then(|s| serde_json::from_str(s).ok()),
     };
 
-    // 7. Create bridge
     let title_ctx = ctx.clone();
     let adapter = create_adapter_arc(&prov.provider_type)?;
     let provider_type_str = provider_type_to_registry_key(&prov.provider_type);
@@ -895,7 +172,6 @@ pub async fn agent_query(
         .with_model_param_overrides(model_param_overrides)
         .with_app(app.clone(), conversation_id.clone());
 
-    // 8. Build permission callback (CanUseToolFn)
     let permission_mode =
         aqbot_agent::permission::PermissionMode::from_str(&session.permission_mode);
     let cwd_for_check = session.cwd.clone().unwrap_or_default();
@@ -909,6 +185,7 @@ pub async fn agent_query(
     let assistant_id_for_task = current_assistant_id_for_perm.clone();
     let db_for_perm = state.sea_db.clone();
     let cancel_token_for_perm = cancel_token.clone();
+    let run_id_for_perm = run.id.clone();
 
     let can_use_tool: CanUseToolFn = Arc::new(move |tool_name: &str, input: &Value| {
         let tool_name = tool_name.to_string();
@@ -922,13 +199,13 @@ pub async fn agent_query(
         let assistant_id = current_assistant_id_for_perm.clone();
         let db = db_for_perm.clone();
         let cancel_token = cancel_token_for_perm.clone();
+        let run_id = run_id_for_perm.clone();
 
         Box::pin(async move {
             if cancel_token.is_cancelled() {
                 return PermissionDecision::Deny("Agent cancelled".to_string());
             }
 
-            // 1. Check conversation-level always_allowed cache
             {
                 let map = always_allowed_map.lock().await;
                 if let Some(set) = map.get(&conv_id_allowed) {
@@ -938,7 +215,6 @@ pub async fn agent_query(
                 }
             }
 
-            // 2. Unified policy evaluation for workspace zoning + tool risk.
             match crate::agent_runtime::policy::evaluate_tool_use(
                 &tool_name,
                 &input,
@@ -960,14 +236,11 @@ pub async fn agent_query(
                     match decide_permission(permission_mode, risk, false) {
                         PermissionAction::AutoAllow => PermissionDecision::Allow,
                         PermissionAction::RequireApproval => {
-                            // Create oneshot channel
                             let (tx, rx) = tokio::sync::oneshot::channel();
                             let perm_id = format!("perm_{}", aqbot_core::utils::gen_id());
 
-                            // Store sender
                             permission_senders.lock().await.insert(perm_id.clone(), tx);
 
-                            // Create a tool_execution record for the permission request
                             let input_str = truncate_preview(
                                 &serde_json::to_string(&input).unwrap_or_default(),
                                 500,
@@ -985,7 +258,6 @@ pub async fn agent_query(
                             .ok()
                             .map(|e| e.id);
 
-                            // Emit permission request event
                             let risk_str = match risk {
                                 aqbot_agent::permission::RiskLevel::ReadOnly => "read_only",
                                 aqbot_agent::permission::RiskLevel::Write => "write",
@@ -1002,12 +274,33 @@ pub async fn agent_query(
                                         .unwrap_or_default(),
                                     tool_use_id: perm_id.clone(),
                                     tool_name: tool_name.clone(),
-                                    input,
+                                    input: input.clone(),
                                     risk_level: risk_str.to_string(),
                                 },
                             );
+                            let _ = agent_run::update_run_status(
+                                &db,
+                                &run_id,
+                                "waiting_approval",
+                                None,
+                            )
+                            .await;
+                            let _ = agent_run::append_run_event(
+                                &db,
+                                &run_id,
+                                None,
+                                "permission_request",
+                                &serde_json::json!({
+                                    "toolUseId": perm_id,
+                                    "toolName": tool_name,
+                                    "input": input,
+                                    "riskLevel": risk_str,
+                                    "executionId": exec_id,
+                                })
+                                .to_string(),
+                            )
+                            .await;
 
-                            // Wait for user response (raw decision string)
                             let final_decision = tokio::select! {
                                 result = rx => match result {
                                     Ok(decision_str) => match decision_str.as_str() {
@@ -1036,7 +329,6 @@ pub async fn agent_query(
                                 }
                             };
 
-                            // Persist approval decision to DB
                             if let Some(eid) = &exec_id {
                                 let status = match &final_decision {
                                     PermissionDecision::Allow
@@ -1060,15 +352,13 @@ pub async fn agent_query(
         })
     });
 
-    // 9. Build AgentOptions with our custom provider + permission callback
     let conv = conversation::get_conversation(&state.sea_db, &conversation_id)
         .await
         .map_err(|e| e.to_string())?;
 
-    // Load enabled skills, build context summary, and create SkillTool
     let home = dirs::home_dir().unwrap_or_default();
     let all_skills = open_agent_sdk::skills::load_all_global(&home);
-    let disabled = aqbot_core::repo::skill::get_disabled_skills(&state.sea_db)
+    let disabled = skill::get_disabled_skills(&state.sea_db)
         .await
         .unwrap_or_default();
     let mut registry = open_agent_sdk::skills::SkillRegistry::new();
@@ -1089,7 +379,6 @@ pub async fn agent_query(
         open_agent_sdk::tools::skill_tool::SkillTool::new(skill_registry),
     );
 
-    // Build ask_fn for AskUserQuestion tool
     let ask_senders = state.agent_ask_senders.clone();
     let app_for_ask = app.clone();
     let conv_id_for_ask = conversation_id.clone();
@@ -1168,7 +457,6 @@ pub async fn agent_query(
 
     let mut agent = Agent::new(agent_options).await.map_err(|e| e.to_string())?;
 
-    // Restore previous conversation context from the agent session
     if let Some(ref ctx_json) = session.sdk_context_json {
         match serde_json::from_str::<Vec<open_agent_sdk::Message>>(ctx_json) {
             Ok(prev_messages) => {
@@ -1190,7 +478,6 @@ pub async fn agent_query(
         model_id
     );
 
-    // 10. Spawn background task 鈥?mark as running in-memory
     let run_guard_id = aqbot_core::utils::gen_id();
     {
         let mut running = RUNNING_AGENTS.lock().unwrap();
@@ -1215,7 +502,6 @@ pub async fn agent_query(
     let cancel_tokens = state.agent_cancel_tokens.clone();
 
     tokio::spawn(async move {
-        // RAII guard: ensures conv_id is removed from RUNNING_AGENTS on exit (even panic)
         let _running_guard = RunningAgentGuard {
             conversation_id: conv_id.clone(),
             run_id: run_guard_id,
@@ -1224,7 +510,7 @@ pub async fn agent_query(
             conversation_id: conv_id.clone(),
             tokens: cancel_tokens,
         };
-        let mut recorder = crate::agent_runtime::event::AgentEventRecorder::new(run.id.clone());
+        let mut recorder = AgentEventRecorder::new(run.id.clone());
         let _ = agent_run::update_run_status(&db, &run.id, "running", None).await;
         let _ = recorder
             .append(
@@ -1257,18 +543,14 @@ pub async fn agent_query(
         let mut in_thinking_block = false;
         let mut has_streamed_deltas = false;
         let mut got_result_or_error = false;
-        // Map SDK tool_use_id 鈫?DB tool_execution.id
         let mut tool_exec_map: HashMap<String, String> = HashMap::new();
 
         while let Some(msg) = rx.recv().await {
             match msg {
                 SDKMessage::Assistant { message: msg, .. } => {
-                    // Ordered processing: collect text/thinking in order,
-                    // collect tool_use blocks for processing after message creation.
                     let mut pending_tool_uses: Vec<(String, String, Value)> = Vec::new();
 
                     if !has_streamed_deltas {
-                        // Process content blocks in order to preserve interleaving
                         for block in &msg.content {
                             match block {
                                 ContentBlock::Thinking { thinking, .. } => {
@@ -1322,17 +604,14 @@ pub async fn agent_query(
                             }
                         }
                     } else {
-                        // Deltas already streamed text/thinking; only collect tool_use blocks
                         for block in &msg.content {
                             if let ContentBlock::ToolUse { id, name, input } = block {
                                 pending_tool_uses.push((id.clone(), name.clone(), input.clone()));
                             }
                         }
                     }
-                    // Reset delta flag for next turn
                     has_streamed_deltas = false;
 
-                    // Create or update assistant message BEFORE processing tool events
                     if current_assistant_msg_id.is_none() {
                         let _ = ensure_agent_assistant_message(
                             &db,
@@ -1349,21 +628,13 @@ pub async fn agent_query(
                         let _ = message::update_message_content(&db, mid, &accumulated_text).await;
                     }
 
-                    // Process tool_use blocks: create DB records, insert inline markers
                     if !pending_tool_uses.is_empty() {
-                        // Close any open thinking block before tool markers
                         if in_thinking_block {
                             accumulated_text.push_str("\n</think>\n\n");
                             in_thinking_block = false;
                         }
 
                         for (sdk_id, name, input) in &pending_tool_uses {
-                            tracing::info!(
-                                "[agent] ToolUse in assistant message: {} ({}), assistantMsgId={:?}",
-                                name, sdk_id, current_assistant_msg_id
-                            );
-
-                            // Create tool_execution record in DB
                             let input_str = truncate_preview(
                                 &serde_json::to_string(input).unwrap_or_default(),
                                 500,
@@ -1373,7 +644,7 @@ pub async fn agent_query(
                                 &conv_id,
                                 current_assistant_msg_id.as_deref(),
                                 "__agent_sdk__",
-                                &name,
+                                name,
                                 Some(&input_str),
                                 None,
                             )
@@ -1406,8 +677,7 @@ pub async fn agent_query(
                                 )
                                 .await;
 
-                            // Build inline <tool-call> marker with DB execution ID
-                            let summary = get_tool_input_summary(&name, input);
+                            let summary = get_tool_input_summary(name, input);
                             let tag_id = exec_id.as_deref().unwrap_or(sdk_id);
                             let marker = format!(
                                 "\n\n<tool-call data-aqbot=\"1\" id=\"{}\" name=\"{}\">{}</tool-call>\n\n",
@@ -1415,7 +685,6 @@ pub async fn agent_query(
                             );
                             accumulated_text.push_str(&marker);
 
-                            // Emit agent-stream-text so frontend content updates in real-time
                             let _ = app.emit(
                                 "agent-stream-text",
                                 AgentTextPayload {
@@ -1427,7 +696,6 @@ pub async fn agent_query(
                                 },
                             );
 
-                            // Emit agent-tool-use event for agentStore
                             let _ = app.emit(
                                 "agent-tool-use",
                                 AgentToolUsePayload {
@@ -1443,7 +711,6 @@ pub async fn agent_query(
                             );
                         }
 
-                        // Update message content with tool-call markers
                         if let Some(ref mid) = current_assistant_msg_id {
                             let _ =
                                 message::update_message_content(&db, mid, &accumulated_text).await;
@@ -1455,8 +722,6 @@ pub async fn agent_query(
                     tool_name,
                     input,
                 } => {
-                    tracing::info!("[agent] ToolStart: {} ({})", tool_name, tool_use_id);
-                    // Emit agent-tool-start
                     let _ = app.emit(
                         "agent-tool-start",
                         AgentToolStartPayload {
@@ -1470,7 +735,6 @@ pub async fn agent_query(
                         },
                     );
 
-                    // Update tool_execution status to 'running'
                     if let Some(exec_id) = tool_exec_map.get(&tool_use_id) {
                         let _ = tool_execution::update_tool_execution_status(
                             &db, exec_id, "running", None, None,
@@ -1495,7 +759,6 @@ pub async fn agent_query(
                     content,
                     is_error,
                 } => {
-                    // Emit agent-tool-result
                     let _ = app.emit(
                         "agent-tool-result",
                         AgentToolResultPayload {
@@ -1510,7 +773,6 @@ pub async fn agent_query(
                         },
                     );
 
-                    // Update tool_execution status + output
                     if let Some(exec_id) = tool_exec_map.get(&tool_use_id) {
                         let status = if is_error { "failed" } else { "success" };
                         let output_preview = truncate_preview(&content, 500);
@@ -1562,7 +824,6 @@ pub async fn agent_query(
                     ..
                 } => {
                     let input_payload = input.clone();
-                    // Emit agent-permission-request
                     let _ = app.emit(
                         "agent-permission-request",
                         AgentPermissionRequestPayload {
@@ -1577,7 +838,6 @@ pub async fn agent_query(
                         },
                     );
 
-                    // Update tool_execution approval_status to 'pending'
                     if let Some(exec_id) = tool_exec_map.get(&tool_use_id) {
                         let _ = tool_execution::update_tool_execution_approval_status(
                             &db, exec_id, "pending",
@@ -1655,7 +915,6 @@ pub async fn agent_query(
                     messages,
                     ..
                 } => {
-                    tracing::info!("[agent] Result: {} turns, cost ${:.4}", t, c);
                     got_result_or_error = true;
                     result_text = text;
                     final_usage = Some(usage);
@@ -1665,7 +924,6 @@ pub async fn agent_query(
                 }
                 SDKMessage::Error { message: err_msg } => {
                     let err_event_message = err_msg.clone();
-                    tracing::error!("[agent] Error: {}", err_msg);
                     if err_msg.contains("reasoning_content") && err_msg.contains("thinking mode") {
                         if let Err(clear_err) =
                             agent_session::clear_sdk_context_by_conversation_id(&db, &conv_id).await
@@ -1673,10 +931,6 @@ pub async fn agent_query(
                             tracing::warn!(
                                 "[agent] Failed to clear stale sdk_context after reasoning error: {}",
                                 clear_err
-                            );
-                        } else {
-                            tracing::info!(
-                                "[agent] Cleared stale sdk_context after reasoning_content error"
                             );
                         }
                     }
@@ -1711,7 +965,6 @@ pub async fn agent_query(
                     return;
                 }
                 SDKMessage::ThinkingDelta { thinking } => {
-                    // Real-time thinking token from API stream
                     has_streamed_deltas = true;
                     if !in_thinking_block {
                         if !accumulated_text.is_empty() {
@@ -1745,7 +998,6 @@ pub async fn agent_query(
                     );
                 }
                 SDKMessage::TextDelta { text } => {
-                    // Real-time text token from API stream
                     has_streamed_deltas = true;
                     if in_thinking_block {
                         accumulated_text.push_str("\n</think>\n\n");
@@ -1780,7 +1032,6 @@ pub async fn agent_query(
             }
         }
 
-        // Bug 4: panic protection 鈥?check if inner task panicked
         match handle.await {
             Ok(()) => {}
             Err(join_err) => {
@@ -1819,9 +1070,7 @@ pub async fn agent_query(
             }
         }
 
-        // If channel closed without Result or Error, emit a fallback error
         if !got_result_or_error {
-            tracing::error!("[agent] Channel closed without Result or Error");
             let _ = app.emit(
                 "agent-error",
                 AgentErrorPayload {
@@ -1854,40 +1103,30 @@ pub async fn agent_query(
             return;
         }
 
-        // Build final content with thinking embedded as <think> tags
         let mut final_content = accumulated_text.clone();
-        // Close any unclosed thinking block
         if in_thinking_block {
             final_content.push_str("\n</think>\n\n");
         }
-        // Append result_text if it has content not yet in accumulated_text
         if !result_text.is_empty() && !accumulated_text.contains(&result_text) {
-            if in_thinking_block {
-                // thinking was just closed above
-            }
             final_content.push_str(&result_text);
         }
 
-        // Update assistant message with final content (including <think> blocks)
         if !final_content.is_empty() {
             if let Some(ref mid) = current_assistant_msg_id {
                 let _ = message::update_message_content(&db, mid, &final_content).await;
-            } else {
-                // No assistant message was created during streaming 鈥?create one now
-                if let Ok(assist_msg) = message::create_message(
-                    &db,
-                    &conv_id,
-                    MessageRole::Assistant,
-                    &final_content,
-                    &[],
-                    Some(&user_msg_id),
-                    0,
-                )
-                .await
-                {
-                    current_assistant_msg_id = Some(assist_msg.id.clone());
-                    let _ = conversation::increment_message_count(&db, &conv_id).await;
-                }
+            } else if let Ok(assist_msg) = message::create_message(
+                &db,
+                &conv_id,
+                MessageRole::Assistant,
+                &final_content,
+                &[],
+                Some(&user_msg_id),
+                0,
+            )
+            .await
+            {
+                current_assistant_msg_id = Some(assist_msg.id.clone());
+                let _ = conversation::increment_message_count(&db, &conv_id).await;
             }
         }
 
@@ -1904,7 +1143,6 @@ pub async fn agent_query(
             .to_string()
         });
 
-        // Persist token usage on the assistant message so the standard footer renders it
         if let (Some(ref mid), Some(ref usage)) = (&current_assistant_msg_id, &final_usage) {
             let _ = message::update_message_usage(
                 &db,
@@ -1946,7 +1184,6 @@ pub async fn agent_query(
             )
             .await;
 
-        // Auto-title: generate AI title after agent completes (first message only)
         if is_first_message {
             let _ = app.emit(
                 "conversation-title-generating",
@@ -1974,7 +1211,6 @@ pub async fn agent_query(
                     if let Err(e) =
                         conversation::update_conversation_title(&db, &conv_id, &title).await
                     {
-                        tracing::error!("[agent] Failed to update AI title: {}", e);
                         let _ = app.emit(
                             "conversation-title-generating",
                             aqbot_core::types::ConversationTitleGeneratingEvent {
@@ -2002,7 +1238,6 @@ pub async fn agent_query(
                     }
                 }
                 Err(err) => {
-                    tracing::warn!("[agent] Auto title generation failed: {}", err);
                     let _ = app.emit(
                         "conversation-title-generating",
                         aqbot_core::types::ConversationTitleGeneratingEvent {
@@ -2015,12 +1250,10 @@ pub async fn agent_query(
             }
         }
 
-        // Update session
         let tokens_delta = final_usage
             .as_ref()
             .map(|u| (u.input_tokens + u.output_tokens) as i32)
             .unwrap_or(0);
-        // Serialize SDK messages context for future resume
         let sdk_context = sdk_messages
             .as_ref()
             .and_then(|msgs| serde_json::to_string(msgs).ok());
@@ -2048,195 +1281,5 @@ pub async fn agent_query(
         .await;
     });
 
-    */
-}
-
-#[tauri::command]
-pub async fn agent_approve(
-    state: State<'_, AppState>,
-    conversation_id: String,
-    tool_use_id: String,
-    decision: String,
-) -> Result<(), String> {
-    if !["allow_once", "allow_always", "deny"].contains(&decision.as_str()) {
-        return Err(format!("Invalid decision: {}", decision));
-    }
-
-    // Look up the stored oneshot sender for this tool_use_id
-    let sender = state
-        .agent_permission_senders
-        .lock()
-        .await
-        .remove(&tool_use_id);
-
-    match sender {
-        Some(tx) => {
-            tx.send(decision.clone())
-                .map_err(|_| "Permission channel closed".to_string())?;
-            crate::agent_runtime::runtime::resolve_permission_request(
-                &state.sea_db,
-                &conversation_id,
-                &tool_use_id,
-                &decision,
-            )
-            .await?;
-            Ok(())
-        }
-        None => Err(format!(
-            "No pending permission request for tool_use_id: {}",
-            tool_use_id
-        )),
-    }
-}
-
-#[tauri::command]
-pub async fn agent_respond_ask(
-    state: State<'_, AppState>,
-    ask_id: String,
-    answer: String,
-) -> Result<(), String> {
-    let sender = state.agent_ask_senders.lock().await.remove(&ask_id);
-
-    match sender {
-        Some(tx) => {
-            tx.send(answer.clone())
-                .map_err(|_| "Ask user channel closed".to_string())?;
-            crate::agent_runtime::runtime::resolve_ask_request(&state.sea_db, &ask_id, &answer)
-                .await?;
-            Ok(())
-        }
-        None => Err(format!("No pending ask request for ask_id: {}", ask_id)),
-    }
-}
-
-#[tauri::command]
-pub async fn agent_cancel(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    conversation_id: String,
-) -> Result<(), String> {
-    let session =
-        agent_session::get_agent_session_by_conversation_id(&state.sea_db, &conversation_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or("Agent session not found")?;
-
-    // Reset DB status to idle
-    agent_session::update_agent_session_status(&state.sea_db, &session.id, "idle")
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if let Some(run) = agent_run::get_latest_run_for_conversation(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        let _ = crate::agent_runtime::runtime::mark_run_cancelling(&state.sea_db, &run).await;
-    }
-
-    if let Some(token) = state
-        .agent_cancel_tokens
-        .lock()
-        .await
-        .remove(&conversation_id)
-    {
-        token.cancel();
-    }
-
-    // Remove from in-memory running set
-    if let Ok(mut running) = RUNNING_AGENTS.lock() {
-        running.remove(&conversation_id);
-    }
-
-    crate::agent_runtime::runtime::finish_run_cancelled(&app, &state.sea_db, &conversation_id)
-        .await?;
-
     Ok(())
-}
-
-#[tauri::command]
-pub async fn agent_update_session(
-    state: State<'_, AppState>,
-    conversation_id: String,
-    cwd: Option<String>,
-    permission_mode: Option<String>,
-) -> Result<AgentSession, String> {
-    crate::agent_runtime::profile::update_profile_from_legacy_inputs(
-        &state.sea_db,
-        &conversation_id,
-        cwd.as_deref(),
-        permission_mode.as_deref(),
-    )
-    .await?;
-    crate::agent_runtime::profile::get_compat_session(&state.sea_db, &conversation_id)
-        .await?
-        .ok_or("Agent session not found".to_string())
-}
-
-#[tauri::command]
-pub async fn agent_get_session(
-    state: State<'_, AppState>,
-    conversation_id: String,
-) -> Result<Option<AgentSession>, String> {
-    crate::agent_runtime::profile::get_compat_session(&state.sea_db, &conversation_id).await
-}
-
-/// Create default workspace directory under config home and return its path.
-#[tauri::command]
-pub async fn agent_ensure_workspace(conversation_id: String) -> Result<String, String> {
-    let workspace_dir = crate::paths::aqbot_home()
-        .join("workspace")
-        .join(&conversation_id);
-    std::fs::create_dir_all(&workspace_dir)
-        .map_err(|e| format!("Failed to create workspace: {}", e))?;
-    workspace_dir
-        .to_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Invalid path encoding".to_string())
-}
-
-/// Backup and clear SDK context when a context-clear marker is inserted.
-#[tauri::command]
-pub async fn agent_backup_and_clear_sdk_context(
-    state: State<'_, AppState>,
-    conversation_id: String,
-) -> Result<(), String> {
-    agent_session::backup_and_clear_sdk_context_by_conversation_id(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Restore SDK context from backup when a context-clear marker is removed.
-#[tauri::command]
-pub async fn agent_restore_sdk_context_from_backup(
-    state: State<'_, AppState>,
-    conversation_id: String,
-) -> Result<(), String> {
-    agent_session::restore_sdk_context_from_backup_by_conversation_id(
-        &state.sea_db,
-        &conversation_id,
-    )
-    .await
-    .map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use aqbot_core::types::ProviderType;
-
-    #[tokio::test]
-    async fn agent_provider_resolution_materializes_builtin_provider() {
-        let db = aqbot_core::db::create_test_pool().await.unwrap().conn;
-
-        let real_id =
-            crate::agent_runtime::compat::resolve_agent_provider_id(&db, "builtin_deepseek")
-                .await
-                .unwrap();
-
-        assert_ne!(real_id, "builtin_deepseek");
-        let provider = aqbot_core::repo::provider::get_provider(&db, &real_id)
-            .await
-            .unwrap();
-        assert_eq!(provider.builtin_id.as_deref(), Some("deepseek"));
-        assert_eq!(provider.provider_type, ProviderType::DeepSeek);
-    }
 }

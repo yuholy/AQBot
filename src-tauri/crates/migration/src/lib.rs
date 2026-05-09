@@ -32,6 +32,8 @@ mod m20260430_000001_add_conversation_thinking_level;
 mod m20260501_000001_add_knowledge_base_rerank_settings;
 mod m20260504_000001_add_external_agent_platform;
 mod m20260504_000001_split_openai_compatible_provider_types;
+mod m20260509_000001_agent_runtime_foundation;
+mod m20260509_000002_agent_run_resume_support;
 
 pub struct Migrator;
 
@@ -71,6 +73,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260501_000001_add_knowledge_base_rerank_settings::Migration),
             Box::new(m20260504_000001_split_openai_compatible_provider_types::Migration),
             Box::new(m20260504_000001_add_external_agent_platform::Migration),
+            Box::new(m20260509_000001_agent_runtime_foundation::Migration),
+            Box::new(m20260509_000002_agent_run_resume_support::Migration),
         ]
     }
 }
@@ -251,6 +255,52 @@ mod tests {
             assert!(
                 manager.has_table(table).await.expect("check agent table"),
                 "missing table {table}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn migrator_up_adds_agent_runtime_foundation_tables_on_sqlite() {
+        let db = sqlite_test_db().await;
+
+        Migrator::up(&db, None)
+            .await
+            .expect("run sqlite migrations");
+
+        let manager = SchemaManager::new(&db);
+        for table in [
+            "agent_profiles",
+            "agent_runs",
+            "agent_run_steps",
+            "agent_run_events",
+        ] {
+            assert!(
+                manager.has_table(table).await.expect("check runtime table"),
+                "missing table {table}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn migrator_up_adds_agent_run_resume_columns_on_sqlite() {
+        let db = sqlite_test_db().await;
+
+        Migrator::up(&db, None)
+            .await
+            .expect("run sqlite migrations");
+
+        let manager = SchemaManager::new(&db);
+        for column in [
+            "resume_capability",
+            "interrupted_reason",
+            "resume_token_json",
+        ] {
+            assert!(
+                manager
+                    .has_column("agent_runs", column)
+                    .await
+                    .expect("check resume column"),
+                "missing agent_runs.{column}"
             );
         }
     }

@@ -2158,8 +2158,9 @@ pub async fn send_message(
         if m.status == "error" {
             continue;
         }
-        history_messages
-            .push(chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?);
+        history_messages.push(
+            chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?,
+        );
     }
 
     // Resolve proxy config early (needed for both summary generation and main request)
@@ -2545,7 +2546,9 @@ pub async fn regenerate_message(
             continue;
         }
         // Include messages up to and including the last user message
-        chat_messages.push(chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?);
+        chat_messages.push(
+            chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?,
+        );
         // Stop after the user message we're regenerating from
         if m.id == last_user_msg.id {
             break;
@@ -2854,7 +2857,9 @@ pub async fn regenerate_with_model(
         if m.status == "error" {
             continue;
         }
-        chat_messages.push(chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?);
+        chat_messages.push(
+            chat_message_from_message(&file_store, m, include_images).map_err(|e| e.to_string())?,
+        );
         if m.id == user_msg.id {
             break;
         }
@@ -3732,8 +3737,10 @@ mod tests {
 
     #[test]
     fn build_message_content_omits_images_when_model_has_no_vision() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("aqbot-no-vision-test-{}", aqbot_core::utils::gen_id()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "aqbot-no-vision-test-{}",
+            aqbot_core::utils::gen_id()
+        ));
         fs::create_dir_all(&temp_dir).unwrap();
 
         let result = (|| {

@@ -675,13 +675,11 @@ mod tests {
                 .expect("missing rerank provider");
 
             assert_eq!(provider.provider_type, provider_type);
-            assert!(
-                provider
-                    .models
-                    .iter()
-                    .any(|model| model.model_id == model_id
-                        && model.model_type.as_ref() == Some(&ModelType::Rerank))
-            );
+            assert!(provider
+                .models
+                .iter()
+                .any(|model| model.model_id == model_id
+                    && model.model_type.as_ref() == Some(&ModelType::Rerank)));
         }
     }
 

@@ -55,7 +55,11 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(AgentTasks::ConversationId).string().null())
                     .col(ColumnDef::new(AgentTasks::SourceMessageId).string().null())
-                    .col(ColumnDef::new(AgentTasks::ExternalAgentId).string().not_null())
+                    .col(
+                        ColumnDef::new(AgentTasks::ExternalAgentId)
+                            .string()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(AgentTasks::ExternalTaskId).string().null())
                     .col(ColumnDef::new(AgentTasks::Kind).string().not_null())
                     .col(ColumnDef::new(AgentTasks::Status).string().not_null())
@@ -99,7 +103,11 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(AgentTaskEvents::TaskId).string().not_null())
-                    .col(ColumnDef::new(AgentTaskEvents::EventType).string().not_null())
+                    .col(
+                        ColumnDef::new(AgentTaskEvents::EventType)
+                            .string()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(AgentTaskEvents::PayloadJson)
                             .text()

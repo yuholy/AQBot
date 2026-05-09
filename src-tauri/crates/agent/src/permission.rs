@@ -34,15 +34,10 @@ pub enum PermissionAction {
     HardDeny,
 }
 
-/// Classify a tool's risk level based on its name
-pub fn classify_tool_risk(tool_name: &str) -> RiskLevel {
-    let name_lower = tool_name.to_lowercase();
-
+fn classify_tool_risk_lowered(name_lower: &str, input: Option<&serde_json::Value>) -> RiskLevel {
     // Execute-level tools
-    if matches!(
-        name_lower.as_str(),
-        "bash" | "shell" | "run_command" | "execute"
-    ) || name_lower.contains("exec")
+    if matches!(name_lower, "bash" | "shell" | "run_command" | "execute")
+        || name_lower.contains("exec")
         || name_lower.contains("run")
         || name_lower.contains("bash")
         || name_lower.contains("shell")
@@ -50,9 +45,20 @@ pub fn classify_tool_risk(tool_name: &str) -> RiskLevel {
         return RiskLevel::Execute;
     }
 
+    // Structured signals: command text implies execution even when tool name is generic.
+    if let Some(command) = input
+        .and_then(|value| value.get("command"))
+        .and_then(|value| value.as_str())
+    {
+        let trimmed = command.trim();
+        if !trimmed.is_empty() {
+            return RiskLevel::Execute;
+        }
+    }
+
     // Write-level tools
     if matches!(
-        name_lower.as_str(),
+        name_lower,
         "write"
             | "edit"
             | "create"
@@ -75,8 +81,27 @@ pub fn classify_tool_risk(tool_name: &str) -> RiskLevel {
         return RiskLevel::Write;
     }
 
+    if let Some(path_fields) = input {
+        if path_fields.get("content").is_some()
+            || path_fields.get("new_path").is_some()
+            || path_fields.get("diff").is_some()
+        {
+            return RiskLevel::Write;
+        }
+    }
+
     // Everything else is read-only
     RiskLevel::ReadOnly
+}
+
+/// Classify a tool's risk level based on its name.
+pub fn classify_tool_risk(tool_name: &str) -> RiskLevel {
+    classify_tool_risk_lowered(&tool_name.to_lowercase(), None)
+}
+
+/// Classify a tool's risk level using both its name and structured input.
+pub fn classify_tool_risk_with_input(tool_name: &str, input: &serde_json::Value) -> RiskLevel {
+    classify_tool_risk_lowered(&tool_name.to_lowercase(), Some(input))
 }
 
 /// Decision matrix: given permission mode, risk level, and whether the tool

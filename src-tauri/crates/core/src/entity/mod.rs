@@ -38,6 +38,10 @@ pub mod retrieval_hits;
 
 pub mod stored_files;
 
+pub mod agent_profiles;
+pub mod agent_run_events;
+pub mod agent_run_steps;
+pub mod agent_runs;
 pub mod agent_sessions;
 pub mod agent_task_events;
 pub mod agent_tasks;

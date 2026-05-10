@@ -2140,18 +2140,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         }).then(keepAgentUnlisten((fn) => { unlistenError = fn; }));
       });
 
-      const runnerKind = options?.executorId === 'claude-code'
-        ? 'claude_code'
-        : options?.executorId === 'deepseek-tui'
-          ? 'deepseek_tui'
-          : 'sdk';
+      const runnerKind = 'sdk';
 
       await invoke('agent_start_run', {
         input: {
           conversationId,
           prompt: content,
           runnerKind,
-          providerId: runnerKind === 'sdk' ? providerId : undefined,
+          providerId,
           modelId: options?.executorModel || modelId,
           cwd: options?.cwd || undefined,
           permissionMode: options?.permissionMode || undefined,

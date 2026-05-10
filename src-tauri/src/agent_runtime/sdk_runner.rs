@@ -32,6 +32,8 @@ pub struct StartSdkRunInput {
     pub prompt: String,
     pub provider_id: String,
     pub model_id: String,
+    pub cwd: Option<String>,
+    pub permission_mode: Option<String>,
 }
 
 pub async fn start_sdk_run(
@@ -44,12 +46,35 @@ pub async fn start_sdk_run(
         prompt,
         provider_id,
         model_id,
+        cwd,
+        permission_mode,
     } = input;
 
-    let profile =
-        crate::agent_runtime::profile::get_or_create_profile(&state.sea_db, &conversation_id)
-            .await?;
+    let profile = crate::agent_runtime::profile::update_profile_from_legacy_inputs(
+        &state.sea_db,
+        &conversation_id,
+        cwd.as_deref(),
+        permission_mode.as_deref(),
+    )
+    .await?;
     let session = ensure_legacy_session_for_profile(&state.sea_db, &profile).await?;
+
+    let effective_cwd = session
+        .cwd
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("Agent workspace is required before starting AQBot Local".to_string())?;
+    let workspace_path = std::path::Path::new(&effective_cwd);
+    if !workspace_path.is_dir() {
+        return Err(format!(
+            "Agent workspace does not exist or is not a directory: {}",
+            effective_cwd
+        ));
+    }
+    let canonical_workspace = workspace_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to access agent workspace '{}': {}", effective_cwd, e))?;
+    let effective_cwd = canonical_workspace.to_string_lossy().to_string();
 
     crate::agent_runtime::runtime::ensure_no_active_run(&state.sea_db, &conversation_id).await?;
 
@@ -174,7 +199,7 @@ pub async fn start_sdk_run(
 
     let permission_mode =
         aqbot_agent::permission::PermissionMode::from_str(&session.permission_mode);
-    let cwd_for_check = session.cwd.clone().unwrap_or_default();
+    let cwd_for_check = effective_cwd.clone();
     let cancel_token = open_agent_sdk::CancellationToken::new();
     let always_allowed_map = state.agent_always_allowed.clone();
     let conv_id_for_allowed = conversation_id.clone();
@@ -445,9 +470,13 @@ pub async fn start_sdk_run(
     let agent_options = AgentOptions {
         model: Some(model_id.clone()),
         provider: Some(Arc::new(bridge)),
-        cwd: session.cwd.clone(),
+        cwd: Some(effective_cwd.clone()),
         system_prompt: conv.system_prompt.clone(),
         skills_summary,
+        append_system_prompt: Some(
+            "Windows execution guidance: prefer PowerShell or cmd-compatible commands. Do not assume bash, grep, sed, awk, or Unix-style root paths exist. Keep file search and command execution inside the current workspace unless the user explicitly asks otherwise."
+                .to_string(),
+        ),
         ask_fn: Some(ask_fn),
         can_use_tool: Some(can_use_tool),
         custom_tools: vec![skill_tool],

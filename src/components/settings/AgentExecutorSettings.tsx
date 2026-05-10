@@ -1,16 +1,12 @@
 import { Card, List, Space, Tag, Typography } from 'antd';
-import { Bot, Brain, Code, FolderOpen, ShieldCheck, Zap } from 'lucide-react';
+import { Bot, FolderOpen, ShieldCheck } from 'lucide-react';
 import { AGENT_EXECUTORS } from '@/lib/agentExecutors';
 
-function ExecutorIcon({ id }: { id: string }) {
-  if (id === 'claude-code') return <Code size={18} />;
-  if (id === 'deepseek-tui') return <Brain size={18} />;
+function ExecutorIcon() {
   return <Bot size={18} />;
 }
 
-function commandHint(id: string): string {
-  if (id === 'claude-code') return 'claude -p <prompt> --output-format text';
-  if (id === 'deepseek-tui') return 'deepseek-tui exec <prompt>';
+function commandHint(): string {
   return 'AQBot built-in agent runtime';
 }
 
@@ -20,7 +16,7 @@ export default function AgentExecutorSettings() {
       <div className="mb-5">
         <Typography.Title level={4} style={{ margin: 0 }}>Agent 执行器</Typography.Title>
         <Typography.Text type="secondary">
-          管理本地 Agent 执行入口。对话页只选择执行器，具体能力和命令约定在这里沉淀。
+          AQBot 现在仅保留内置本地 Agent 运行时，工作目录与权限模式仍可在对话页配置。
         </Typography.Text>
       </div>
 
@@ -30,25 +26,23 @@ export default function AgentExecutorSettings() {
           renderItem={(executor) => (
             <List.Item>
               <List.Item.Meta
-                avatar={<ExecutorIcon id={executor.id} />}
-                title={
+                avatar={<ExecutorIcon />}
+                title={(
                   <Space wrap>
                     <span>{executor.name}</span>
                     <Tag color="blue">Local</Tag>
-                    {executor.supportsAutoMode && <Tag color="processing">Auto</Tag>}
                   </Space>
-                }
-                description={
+                )}
+                description={(
                   <Space direction="vertical" size={6}>
                     <Typography.Text type="secondary">{executor.description}</Typography.Text>
-                    <Typography.Text code>{commandHint(executor.id)}</Typography.Text>
+                    <Typography.Text code>{commandHint()}</Typography.Text>
                     <Space wrap>
                       {executor.supportsCwd && <Tag icon={<FolderOpen size={12} />}>工作目录</Tag>}
                       {executor.supportsPermissionMode && <Tag icon={<ShieldCheck size={12} />}>权限模式</Tag>}
-                      {executor.supportsAutoMode && <Tag icon={<Zap size={12} />}>自动执行</Tag>}
                     </Space>
                   </Space>
-                }
+                )}
               />
             </List.Item>
           )}

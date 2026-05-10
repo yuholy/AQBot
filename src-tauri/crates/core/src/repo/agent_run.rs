@@ -72,7 +72,6 @@ pub async fn create_run(
     let now = now_string();
     let resume_capability = match runner_kind {
         "sdk" => "resumable",
-        "claude_code" | "deepseek_tui" => "replay_only",
         _ => "none",
     };
     let model = agent_runs::ActiveModel {
@@ -273,7 +272,6 @@ pub async fn mark_incomplete_runs_interrupted(db: &DatabaseConnection) -> Result
         am.interrupted_reason = Set(Some("app_restart".to_string()));
         am.resume_capability = Set(match run.runner_kind.as_str() {
             "sdk" => "resumable".to_string(),
-            "claude_code" | "deepseek_tui" => "replay_only".to_string(),
             _ => "none".to_string(),
         });
         am.resume_token_json = Set(match run.runner_kind.as_str() {
@@ -286,7 +284,6 @@ pub async fn mark_incomplete_runs_interrupted(db: &DatabaseConnection) -> Result
             "reason": "app_restart",
             "resumeCapability": match run.runner_kind.as_str() {
                 "sdk" => "resumable",
-                "claude_code" | "deepseek_tui" => "replay_only",
                 _ => "none",
             },
         })

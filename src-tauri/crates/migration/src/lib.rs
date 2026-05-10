@@ -34,6 +34,7 @@ mod m20260504_000001_add_external_agent_platform;
 mod m20260504_000001_split_openai_compatible_provider_types;
 mod m20260509_000001_agent_runtime_foundation;
 mod m20260509_000002_agent_run_resume_support;
+mod m20260510_000001_sdk_only_agent_runtime;
 
 pub struct Migrator;
 
@@ -75,6 +76,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260504_000001_add_external_agent_platform::Migration),
             Box::new(m20260509_000001_agent_runtime_foundation::Migration),
             Box::new(m20260509_000002_agent_run_resume_support::Migration),
+            Box::new(m20260510_000001_sdk_only_agent_runtime::Migration),
         ]
     }
 }

@@ -98,50 +98,27 @@ pub async fn agent_start_run(
     state: State<'_, AppState>,
     input: AgentStartRunInput,
 ) -> Result<(), String> {
-    let runner_kind = runner_kind_from_legacy(input.runner_kind.as_deref().unwrap_or("sdk"));
-    match runner_kind {
-        crate::agent_runtime::runner::AgentRunnerKind::ClaudeCode => {
-            agent_query_claude_code(
-                app,
-                state,
-                input.conversation_id,
-                input.prompt,
-                input.cwd,
-                input.permission_mode,
-                input.model_id,
-            )
-            .await
-        }
-        crate::agent_runtime::runner::AgentRunnerKind::DeepseekTui => {
-            agent_query_deepseek_tui(
-                app,
-                state,
-                input.conversation_id,
-                input.prompt,
-                input.cwd,
-                input.permission_mode,
-                input.model_id,
-            )
-            .await
-        }
-        crate::agent_runtime::runner::AgentRunnerKind::Sdk => {
-            let provider_id = input
-                .provider_id
-                .ok_or("providerId is required for sdk runner".to_string())?;
-            let model_id = input
-                .model_id
-                .ok_or("modelId is required for sdk runner".to_string())?;
-            agent_query(
-                app,
-                state,
-                input.conversation_id,
-                input.prompt,
-                provider_id,
-                model_id,
-            )
-            .await
-        }
-    }
+    let _runner_kind = runner_kind_from_legacy(input.runner_kind.as_deref().unwrap_or("sdk"));
+    let provider_id = input
+        .provider_id
+        .ok_or("providerId is required for sdk runner".to_string())?;
+    let model_id = input
+        .model_id
+        .ok_or("modelId is required for sdk runner".to_string())?;
+
+    crate::agent_runtime::sdk_runner::start_sdk_run(
+        app,
+        &state,
+        crate::agent_runtime::sdk_runner::StartSdkRunInput {
+            conversation_id: input.conversation_id,
+            prompt: input.prompt,
+            provider_id,
+            model_id,
+            cwd: input.cwd,
+            permission_mode: input.permission_mode,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -281,462 +258,28 @@ pub async fn agent_resume_run(
 
 #[tauri::command]
 pub async fn agent_query_claude_code(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    conversation_id: String,
-    prompt: String,
-    cwd: Option<String>,
-    permission_mode: Option<String>,
-    model: Option<String>,
+    _app: tauri::AppHandle,
+    _state: State<'_, AppState>,
+    _conversation_id: String,
+    _prompt: String,
+    _cwd: Option<String>,
+    _permission_mode: Option<String>,
+    _model: Option<String>,
 ) -> Result<(), String> {
-    if prompt.trim().is_empty() {
-        return Err("Prompt is empty".to_string());
-    }
-
-    let profile = crate::agent_runtime::profile::update_profile_from_legacy_inputs(
-        &state.sea_db,
-        &conversation_id,
-        cwd.as_deref(),
-        permission_mode.as_deref(),
-    )
-    .await?;
-    let session = ensure_legacy_session_for_profile(&state.sea_db, &profile).await?;
-
-    crate::agent_runtime::runtime::ensure_no_active_run(&state.sea_db, &conversation_id).await?;
-
-    {
-        let running = RUNNING_AGENTS.lock().unwrap();
-        if running.contains_key(&conversation_id) {
-            return Err("Agent is already running".to_string());
-        }
-    }
-
-    agent_session::update_agent_session_status(&state.sea_db, &session.id, "running")
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let run = match crate::agent_runtime::runtime::start_run(
-        &state.sea_db,
-        &conversation_id,
-        crate::agent_runtime::runner::AgentRunnerKind::ClaudeCode,
-        &prompt,
-        None,
-        model.as_deref(),
-        None,
-    )
-    .await
-    {
-        Ok((_, run)) => run,
-        Err(err) => {
-            let _ = agent_session::update_agent_session_status(&state.sea_db, &session.id, "idle")
-                .await;
-            return Err(err);
-        }
-    };
-
-    let user_message = message::create_message(
-        &state.sea_db,
-        &conversation_id,
-        MessageRole::User,
-        &prompt,
-        &[],
-        None,
-        0,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let pre_conv = conversation::get_conversation(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let is_first_message = pre_conv.message_count <= 1;
-
-    conversation::increment_message_count(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if is_first_message {
-        let fallback_title = if prompt.chars().count() > 30 {
-            format!("{}...", prompt.chars().take(30).collect::<String>())
-        } else {
-            prompt.clone()
-        };
-        if conversation::update_conversation_title(&state.sea_db, &conversation_id, &fallback_title)
-            .await
-            .is_ok()
-        {
-            let _ = app.emit(
-                "conversation-title-updated",
-                aqbot_core::types::ConversationTitleUpdatedEvent {
-                    conversation_id: conversation_id.clone(),
-                    title: fallback_title,
-                },
-            );
-        }
-    }
-
-    let effective_cwd = cwd.or(session.cwd.clone()).filter(|s| !s.trim().is_empty());
-    let effective_permission_mode =
-        crate::agent_runtime::cli_runner::map_claude_code_permission_mode(
-            permission_mode.as_deref(),
-        )
-        .to_string();
-
-    let run_guard_id = aqbot_core::utils::gen_id();
-    {
-        let mut running = RUNNING_AGENTS.lock().unwrap();
-        running.insert(conversation_id.clone(), run_guard_id.clone());
-    }
-
-    let db = state.sea_db.clone();
-    let session_id = session.id.clone();
-    let conv_id = conversation_id.clone();
-    let user_msg_id = user_message.id.clone();
-    let assistant_created_at = user_message.created_at + 1;
-
-    tokio::spawn(async move {
-        let _running_guard = RunningAgentGuard {
-            conversation_id: conv_id.clone(),
-            run_id: run_guard_id,
-        };
-        let recorder = crate::agent_runtime::event::AgentEventRecorder::new(run.id.clone());
-        let _ = agent_run::update_run_status(&db, &run.id, "running", None).await;
-        let _ = recorder
-            .append(
-                &db,
-                None,
-                "run_started",
-                &serde_json::json!({
-                    "conversationId": conv_id.clone(),
-                    "runnerKind": "claude_code",
-                    "model": model.clone(),
-                }),
-            )
-            .await;
-
-        let mut current_assistant_msg_id: Option<String> = None;
-        let assistant_id_for_task: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
-        let _ = ensure_agent_assistant_message(
-            &db,
-            &app,
-            &conv_id,
-            &user_msg_id,
-            assistant_created_at,
-            "",
-            &mut current_assistant_msg_id,
-            &assistant_id_for_task,
-        )
-        .await;
-
-        let final_text = crate::agent_runtime::cli_runner::run_claude_code_once(
-            &prompt,
-            effective_cwd.as_deref(),
-            Some(&effective_permission_mode),
-            model.as_deref(),
-        )
-        .await;
-
-        if let Some(ref mid) = current_assistant_msg_id {
-            let _ = message::update_message_content(&db, mid, &final_text).await;
-        }
-
-        let final_status = if final_text.contains("failed") || final_text.contains("timed out") {
-            "failed"
-        } else {
-            "completed"
-        };
-        let _ = recorder
-            .append(
-                &db,
-                None,
-                "run_finished",
-                &serde_json::json!({
-                    "status": final_status,
-                    "assistantMessageId": current_assistant_msg_id.clone(),
-                    "text": final_text.clone(),
-                }),
-            )
-            .await;
-        let _ = agent_run::finish_run(
-            &db,
-            &run.id,
-            final_status,
-            None,
-            None,
-            0.0,
-            if final_status == "failed" {
-                Some(final_text.as_str())
-            } else {
-                None
-            },
-        )
-        .await;
-
-        let _ = app.emit(
-            "agent-done",
-            AgentDonePayload {
-                conversation_id: conv_id.clone(),
-                assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
-                text: final_text,
-                thinking: None,
-                model: model.clone(),
-                session_id: None,
-                usage: None,
-                num_turns: Some(1),
-                cost_usd: None,
-            },
-        );
-
-        let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
-    });
-
-    Ok(())
+    Err("Claude Code local executor has been removed. Use AQBot Local (SDK) instead.".to_string())
 }
 
 #[tauri::command]
 pub async fn agent_query_deepseek_tui(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    conversation_id: String,
-    prompt: String,
-    cwd: Option<String>,
-    permission_mode: Option<String>,
-    model: Option<String>,
+    _app: tauri::AppHandle,
+    _state: State<'_, AppState>,
+    _conversation_id: String,
+    _prompt: String,
+    _cwd: Option<String>,
+    _permission_mode: Option<String>,
+    _model: Option<String>,
 ) -> Result<(), String> {
-    if prompt.trim().is_empty() {
-        return Err("Prompt is empty".to_string());
-    }
-
-    let profile = crate::agent_runtime::profile::update_profile_from_legacy_inputs(
-        &state.sea_db,
-        &conversation_id,
-        cwd.as_deref(),
-        permission_mode.as_deref(),
-    )
-    .await?;
-    let session = ensure_legacy_session_for_profile(&state.sea_db, &profile).await?;
-
-    crate::agent_runtime::runtime::ensure_no_active_run(&state.sea_db, &conversation_id).await?;
-
-    {
-        let running = RUNNING_AGENTS.lock().unwrap();
-        if running.contains_key(&conversation_id) {
-            return Err("Agent is already running".to_string());
-        }
-    }
-
-    agent_session::update_agent_session_status(&state.sea_db, &session.id, "running")
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let run = match crate::agent_runtime::runtime::start_run(
-        &state.sea_db,
-        &conversation_id,
-        crate::agent_runtime::runner::AgentRunnerKind::DeepseekTui,
-        &prompt,
-        None,
-        model.as_deref(),
-        session.sdk_context_json.as_deref(),
-    )
-    .await
-    {
-        Ok((_, run)) => run,
-        Err(err) => {
-            let _ = agent_session::update_agent_session_status(&state.sea_db, &session.id, "idle")
-                .await;
-            return Err(err);
-        }
-    };
-
-    let user_message = message::create_message(
-        &state.sea_db,
-        &conversation_id,
-        MessageRole::User,
-        &prompt,
-        &[],
-        None,
-        0,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let pre_conv = conversation::get_conversation(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let is_first_message = pre_conv.message_count <= 1;
-
-    conversation::increment_message_count(&state.sea_db, &conversation_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if is_first_message {
-        let fallback_title = if prompt.chars().count() > 30 {
-            format!("{}...", prompt.chars().take(30).collect::<String>())
-        } else {
-            prompt.clone()
-        };
-        if conversation::update_conversation_title(&state.sea_db, &conversation_id, &fallback_title)
-            .await
-            .is_ok()
-        {
-            let _ = app.emit(
-                "conversation-title-updated",
-                aqbot_core::types::ConversationTitleUpdatedEvent {
-                    conversation_id: conversation_id.clone(),
-                    title: fallback_title,
-                },
-            );
-        }
-    }
-
-    let effective_cwd = cwd.or(session.cwd.clone()).filter(|s| !s.trim().is_empty());
-    let auto_mode = matches!(
-        permission_mode.as_deref(),
-        Some("accept_edits" | "acceptEdits" | "full_access" | "bypassPermissions" | "auto")
-    );
-
-    let run_guard_id = aqbot_core::utils::gen_id();
-    {
-        let mut running = RUNNING_AGENTS.lock().unwrap();
-        running.insert(conversation_id.clone(), run_guard_id.clone());
-    }
-
-    let db = state.sea_db.clone();
-    let session_id = session.id.clone();
-    let conv_id = conversation_id.clone();
-    let user_msg_id = user_message.id.clone();
-    let assistant_created_at = user_message.created_at + 1;
-    let deepseek_ctx = crate::agent_runtime::cli_runner::load_deepseek_session_context(
-        session.sdk_context_json.as_deref(),
-    );
-    let saved_deepseek_session_id = deepseek_ctx.deepseek_session_id.clone();
-
-    tokio::spawn(async move {
-        let _running_guard = RunningAgentGuard {
-            conversation_id: conv_id.clone(),
-            run_id: run_guard_id,
-        };
-        let recorder = crate::agent_runtime::event::AgentEventRecorder::new(run.id.clone());
-        let _ = agent_run::update_run_status(&db, &run.id, "running", None).await;
-        let _ = recorder
-            .append(
-                &db,
-                None,
-                "run_started",
-                &serde_json::json!({
-                    "conversationId": conv_id.clone(),
-                    "runnerKind": "deepseek_tui",
-                    "model": model.clone(),
-                }),
-            )
-            .await;
-
-        let mut current_assistant_msg_id: Option<String> = None;
-        let assistant_id_for_task: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
-        let _ = ensure_agent_assistant_message(
-            &db,
-            &app,
-            &conv_id,
-            &user_msg_id,
-            assistant_created_at,
-            "",
-            &mut current_assistant_msg_id,
-            &assistant_id_for_task,
-        )
-        .await;
-
-        let (final_text, final_thinking, final_model, resolved_session_id, session_context_json) =
-            crate::agent_runtime::cli_runner::run_deepseek_tui_once(
-                &prompt,
-                effective_cwd.as_deref(),
-                auto_mode,
-                model.as_deref(),
-                saved_deepseek_session_id.as_deref(),
-            )
-            .await;
-
-        if let Some(ref mid) = current_assistant_msg_id {
-            let final_content = crate::agent_runtime::cli_runner::build_agent_content_with_thinking(
-                &final_text,
-                final_thinking.as_deref(),
-            );
-            let _ = message::update_message_content_and_thinking(
-                &db,
-                mid,
-                &final_content,
-                final_thinking.as_deref(),
-            )
-            .await;
-        }
-
-        let final_status = if final_text.contains("failed") || final_text.contains("timed out") {
-            "failed"
-        } else {
-            "completed"
-        };
-        let token_usage_json = resolved_session_id
-            .as_ref()
-            .map(|_| serde_json::json!({ "total_tokens": 0 }).to_string());
-        let _ = recorder
-            .append(
-                &db,
-                None,
-                "run_finished",
-                &serde_json::json!({
-                    "status": final_status,
-                    "assistantMessageId": current_assistant_msg_id.clone(),
-                    "text": final_text.clone(),
-                    "thinking": final_thinking.clone(),
-                    "sessionId": resolved_session_id.clone(),
-                }),
-            )
-            .await;
-        let _ = agent_run::finish_run(
-            &db,
-            &run.id,
-            final_status,
-            session_context_json.as_deref(),
-            token_usage_json.as_deref(),
-            0.0,
-            if final_status == "failed" {
-                Some(final_text.as_str())
-            } else {
-                None
-            },
-        )
-        .await;
-
-        let _ = app.emit(
-            "agent-done",
-            AgentDonePayload {
-                conversation_id: conv_id.clone(),
-                assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
-                text: final_text,
-                thinking: final_thinking,
-                model: final_model,
-                session_id: resolved_session_id,
-                usage: None,
-                num_turns: Some(1),
-                cost_usd: None,
-            },
-        );
-
-        if let Some(ctx_json) = session_context_json.as_deref() {
-            let _ = agent_session::update_agent_session_after_query(
-                &db,
-                &session_id,
-                "idle",
-                Some(ctx_json),
-                0,
-                0.0,
-            )
-            .await;
-        } else {
-            let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
-        }
-    });
-
-    Ok(())
+    Err("DeepSeek TUI local executor has been removed. Use AQBot Local (SDK) instead.".to_string())
 }
 
 #[tauri::command]
@@ -756,6 +299,8 @@ pub async fn agent_query(
             prompt,
             provider_id,
             model_id,
+            cwd: None,
+            permission_mode: None,
         },
     )
     .await

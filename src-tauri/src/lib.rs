@@ -309,8 +309,6 @@ pub fn run() {
             commands::storage::reset_documents_root,
             // agent
             commands::agent::agent_query,
-            commands::agent::agent_query_claude_code,
-            commands::agent::agent_query_deepseek_tui,
             commands::agent::agent_cancel,
             commands::agent::agent_update_session,
             commands::agent::agent_get_session,

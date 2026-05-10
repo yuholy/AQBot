@@ -4,25 +4,18 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunnerKind {
     Sdk,
-    ClaudeCode,
-    DeepseekTui,
 }
 
 impl AgentRunnerKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Sdk => "sdk",
-            Self::ClaudeCode => "claude_code",
-            Self::DeepseekTui => "deepseek_tui",
         }
     }
 
     pub fn from_str(value: &str) -> Self {
-        match value {
-            "claude_code" | "claude-code" => Self::ClaudeCode,
-            "deepseek_tui" | "deepseek-tui" => Self::DeepseekTui,
-            _ => Self::Sdk,
-        }
+        let _ = value;
+        Self::Sdk
     }
 }
 
@@ -73,10 +66,7 @@ pub trait AgentRunner {
 pub struct SdkRunner;
 
 #[derive(Debug, Clone, Copy)]
-pub struct ClaudeCodeRunner;
-
-#[derive(Debug, Clone, Copy)]
-pub struct DeepseekTuiRunner;
+pub struct LegacyRunner;
 
 impl AgentRunner for SdkRunner {
     fn kind(&self) -> AgentRunnerKind {
@@ -101,42 +91,30 @@ impl AgentRunner for SdkRunner {
     }
 }
 
-impl AgentRunner for ClaudeCodeRunner {
+impl AgentRunner for LegacyRunner {
     fn kind(&self) -> AgentRunnerKind {
-        AgentRunnerKind::ClaudeCode
+        AgentRunnerKind::Sdk
     }
 
     fn resume(&self, _run: &AgentRun) -> RunnerResumeDecision {
         RunnerResumeDecision {
             accepted: false,
             event_type: "run_resume_rejected",
-            message: "Claude Code runs are replay-only; start a new run instead.".to_string(),
-        }
-    }
-}
-
-impl AgentRunner for DeepseekTuiRunner {
-    fn kind(&self) -> AgentRunnerKind {
-        AgentRunnerKind::DeepseekTui
-    }
-
-    fn resume(&self, _run: &AgentRun) -> RunnerResumeDecision {
-        RunnerResumeDecision {
-            accepted: false,
-            event_type: "run_resume_rejected",
-            message: "DeepSeek TUI runs are replay-only; start a new run instead.".to_string(),
+            message: "Legacy local agent runs can no longer be resumed. Start a new SDK run instead."
+                .to_string(),
         }
     }
 }
 
 pub fn runner_for_kind(kind: AgentRunnerKind) -> Box<dyn AgentRunner + Send + Sync> {
-    match kind {
-        AgentRunnerKind::Sdk => Box::new(SdkRunner),
-        AgentRunnerKind::ClaudeCode => Box::new(ClaudeCodeRunner),
-        AgentRunnerKind::DeepseekTui => Box::new(DeepseekTuiRunner),
-    }
+    let _ = kind;
+    Box::new(SdkRunner)
 }
 
 pub fn runner_for_run(run: &AgentRun) -> Box<dyn AgentRunner + Send + Sync> {
-    runner_for_kind(AgentRunnerKind::from_str(&run.runner_kind))
+    if run.runner_kind == "sdk" {
+        Box::new(SdkRunner)
+    } else {
+        Box::new(LegacyRunner)
+    }
 }

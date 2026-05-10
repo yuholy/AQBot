@@ -27,30 +27,6 @@ export const AGENT_EXECUTORS: AgentExecutorMeta[] = [
     supportsPermissionMode: true,
     supportsAutoMode: false,
   },
-  {
-    id: 'claude-code',
-    name: 'Claude Code',
-    shortName: 'Claude',
-    description: 'Run tasks through the local Claude Code CLI',
-    kind: 'local',
-    supportsCwd: true,
-    supportsPermissionMode: true,
-    supportsAutoMode: true,
-    supportsModelSelection: true,
-    modelOptions: ['sonnet', 'opus', 'haiku'],
-  },
-  {
-    id: 'deepseek-tui',
-    name: 'DeepSeek TUI',
-    shortName: 'DeepSeek',
-    description: 'Run tasks through the local deepseek-tui CLI',
-    kind: 'local',
-    supportsCwd: true,
-    supportsPermissionMode: true,
-    supportsAutoMode: true,
-    supportsModelSelection: true,
-    modelOptions: ['deepseek-v4-pro', 'deepseek-v4-flash'],
-  },
 ];
 
 const AGENT_EXECUTOR_MAP = new Map(AGENT_EXECUTORS.map((executor) => [executor.id, executor]));
@@ -60,7 +36,8 @@ export function getAgentExecutorMeta(id?: string | null): AgentExecutorMeta {
 }
 
 export function normalizeAgentExecutorId(id?: string | null): AgentExecutorId {
-  return id === 'claude-code' || id === 'deepseek-tui' ? id : DEFAULT_AGENT_EXECUTOR_ID;
+  void id;
+  return DEFAULT_AGENT_EXECUTOR_ID;
 }
 
 export function getAgentExecutorStorageKey(conversationId: string): string {
